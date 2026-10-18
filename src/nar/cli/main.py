@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import sys
 import traceback
+from pathlib import Path
 
 import click
 
 from nar import __version__
 from nar.cli import repl
+from nar.config import load_config
 from nar.errors import NarError
 
 
@@ -28,8 +30,19 @@ def run_single(prompt: str) -> None:
     ),
 )
 @click.version_option(__version__, prog_name="nar")
+@click.option(
+    "--show-config",
+    is_flag=True,
+    help="Print the effective configuration and where each value comes from, then exit.",
+)
 @click.argument("prompt", required=False)
-def cli(prompt: str | None) -> None:
+def cli(prompt: str | None, show_config: bool) -> None:
+    cwd = Path.cwd()
+    loaded = load_config(cwd)  # invalid configuration stops startup here
+    if show_config:
+        for line in loaded.describe(cwd):
+            click.echo(line)
+        return
     if prompt is not None:
         run_single(prompt)
     else:
