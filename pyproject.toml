@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nar"
+dynamic = ["version"]
+description = "Python CLI coding agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "click",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+dev = ["ruff", "pytest"]
+
+[project.scripts]
+nar = "nar.cli:main"
+
+[tool.hatch.version]
+path = "src/nar/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nar"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
