@@ -177,3 +177,21 @@ def test_invalid_config_traceback_with_debug(runner, workdir, monkeypatch):
     result = runner.invoke(main, [])
     assert result.exit_code == 1
     assert "Traceback" in result.stderr
+
+
+def test_interactive_shows_agents_md_notice(runner, workdir, monkeypatch):
+    (workdir / ".git").mkdir()
+    (workdir / "AGENTS.md").write_text("rules", encoding="utf-8")
+    sub = workdir / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    result = runner.invoke(main, [], input="exit\n")
+    assert result.exit_code == 0
+    assert f"Using AGENTS.md: {(workdir / 'AGENTS.md').resolve()}" in result.output
+
+
+def test_interactive_without_agents_md_has_no_notice(runner, workdir, monkeypatch):
+    monkeypatch.setattr("nar.context.instructions._is_git_root", lambda directory: False)
+    result = runner.invoke(main, [], input="exit\n")
+    assert result.exit_code == 0
+    assert "AGENTS.md" not in result.output

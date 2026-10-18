@@ -12,6 +12,7 @@ import click
 from nar import __version__
 from nar.cli import repl
 from nar.config import load_config
+from nar.context import load_project_instructions
 from nar.errors import NarError
 
 
@@ -43,10 +44,11 @@ def cli(prompt: str | None, show_config: bool) -> None:
         for line in loaded.describe(cwd):
             click.echo(line)
         return
+    instructions = load_project_instructions(cwd)
     if prompt is not None:
         run_single(prompt)
     else:
-        repl.run()
+        repl.run(instructions)
 
 
 def _debug_enabled() -> bool:

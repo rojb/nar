@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import click
 
+from nar.context import ProjectInstructions
+
 PROMPT = "nar> "
 EXIT_WORDS = {"exit"}
 
 
-def run() -> None:
+def run(instructions: ProjectInstructions | None = None) -> None:
     """Read lines until ``exit``, end-of-input or Ctrl+C. Never raises on those."""
+    if instructions is not None:
+        click.echo(f"Using AGENTS.md: {instructions.path}")
     click.echo("nar interactive mode (placeholder). Type 'exit' to leave.")
     while True:
         try:
