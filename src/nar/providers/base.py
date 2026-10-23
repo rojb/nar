@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
+from typing import Any
 
 from nar.errors import ProviderError
 from nar.providers.messages import (
@@ -53,3 +55,17 @@ class LLMProvider(ABC):
             if isinstance(event, ResponseDone):
                 return event.response
         raise ProviderError(f"{self.name} ended the response without finishing it", self.name)
+
+
+def parse_tool_arguments(raw: str) -> dict[str, Any]:
+    """Decode tool-call arguments; anything but a JSON object becomes ``{}``.
+
+    The tool's argument validation then tells the model what was missing.
+    """
+    if not raw.strip():
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
