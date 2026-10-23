@@ -27,3 +27,11 @@ class ConfigError(NarError):
     def __init__(self, message: str, path: Path | None = None, exit_code: int = 1) -> None:
         super().__init__(message, exit_code)
         self.path = path
+
+
+class ProviderError(NarError):
+    """An LLM provider could not be used or rejected a request."""
+
+    def __init__(self, message: str, provider: str, exit_code: int = 1) -> None:
+        super().__init__(message, exit_code)
+        self.provider = provider
