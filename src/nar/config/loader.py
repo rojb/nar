@@ -17,6 +17,7 @@ from nar.config.models import NarConfig
 from nar.errors import ConfigError
 
 DEFAULT_SOURCE = "default"
+COMMAND_LINE_SOURCE = "command line"
 
 
 @dataclass(frozen=True)
@@ -39,12 +40,16 @@ class LoadedConfig:
         return lines
 
 
-def load_config(cwd: Path) -> LoadedConfig:
-    """Merge defaults <- user <- project, then validate once."""
+def load_config(cwd: Path, overrides: dict[str, Any] | None = None) -> LoadedConfig:
+    """Merge defaults <- user <- project <- command line, then validate once.
+
+    ``overrides`` holds command-line values; ``None`` entries are ignored.
+    """
     user_path = paths.user_config()
     project_path = paths.project_config(cwd)
 
-    defaults = NarConfig().model_dump(mode="json")
+    # Without validation, settings resolved later (such as `model`) stay None and are left out.
+    defaults = NarConfig.model_construct().model_dump(mode="json", exclude_none=True)
     provenance: dict[str, str] = {}
     _flatten(defaults, "", provenance, DEFAULT_SOURCE)
 
@@ -53,6 +58,9 @@ def load_config(cwd: Path) -> LoadedConfig:
         data = _read_toml(path)
         if data:
             merged = _merge(merged, data, "", str(path), provenance)
+    flags = {key: value for key, value in (overrides or {}).items() if value is not None}
+    if flags:
+        merged = _merge(merged, flags, "", COMMAND_LINE_SOURCE, provenance)
 
     try:
         config = NarConfig.model_validate(merged)
@@ -137,7 +145,7 @@ def _translate(exc: ValidationError, provenance: dict[str, str]) -> ConfigError:
         key = ".".join(str(p) for p in loc)
         source = _source_for(loc, provenance)
         where = "built-in defaults" if source == DEFAULT_SOURCE else source
-        if source != DEFAULT_SOURCE and first_path is None:
+        if source not in (DEFAULT_SOURCE, COMMAND_LINE_SOURCE) and first_path is None:
             first_path = Path(source)
         if err["type"] == "extra_forbidden":
             messages.append(f"unknown setting '{key}' in {where}")
@@ -158,7 +166,7 @@ def _format_value(value: Any) -> str:
 
 
 def _display_source(source: str, cwd: Path | None) -> str:
-    if source == DEFAULT_SOURCE or cwd is None:
+    if source in (DEFAULT_SOURCE, COMMAND_LINE_SOURCE) or cwd is None:
         return source
     try:
         return Path(source).relative_to(cwd).as_posix()
