@@ -19,16 +19,22 @@ from nar.errors import NarError
 def run_single(prompt: str, config: NarConfig) -> None:
     """Send one prompt to the model and stream the answer (the agent loop replaces it in RRG-63)."""
     # Imported here: the provider SDKs are slow to import and other commands do not need them.
-    from nar.providers import Message, TextDelta, create_provider
+    from nar.providers import Message, ResponseDone, StopReason, TextDelta, create_provider
 
     provider = create_provider(config, on_retry=lambda notice: _warn(str(notice)))
     text = ""
+    stop_reason = StopReason.END
     for event in provider.stream([Message.user(prompt)]):
         if isinstance(event, TextDelta):
             text = event.text
             click.echo(text, nl=False)
+        elif isinstance(event, ResponseDone):
+            stop_reason = event.response.stop_reason
     if not text.endswith("\n"):
         click.echo()
+    if stop_reason is StopReason.MAX_TOKENS:
+        # Reasoning models can spend the whole limit before writing any text.
+        _warn(f"warning: the answer was cut off: {provider.model} reached the output token limit")
 
 
 def _warn(message: str) -> None:

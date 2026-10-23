@@ -7,7 +7,7 @@ from click.testing import CliRunner
 from nar import __version__
 from nar.cli import main
 from nar.errors import NarError
-from nar.providers import LLMResponse, ResponseDone, TextDelta
+from nar.providers import LLMResponse, ResponseDone, StopReason, TextDelta
 from nar.providers.retry import RetryNotice
 
 # `nar.cli.main` the attribute is the function; fetch the module explicitly.
@@ -286,3 +286,15 @@ def test_retry_notices_go_to_stderr(runner, fake_provider):
     assert result.exit_code == 0
     assert result.stdout == "ok\n"
     assert "retrying openrouter in 1.0s (rate limited, attempt 2/4)" in result.stderr
+
+
+def test_answer_cut_by_output_limit_warns_on_stderr(runner, fake_provider):
+    def stream(messages, **kwargs):
+        yield ResponseDone(LLMResponse("", stop_reason=StopReason.MAX_TOKENS))
+
+    fake_provider.stream = stream
+    fake_provider.model = "qwen-test"
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 0
+    assert result.stdout == "\n"
+    assert "answer was cut off: qwen-test reached the output token limit" in result.stderr
