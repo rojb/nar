@@ -40,6 +40,8 @@ class NarConfig(BaseModel):
     provider: ProviderName = ProviderName.OPENROUTER
     model: str | None = None
     approval: ApprovalLevel = ApprovalLevel.ASK
+    # Model calls the agent may make for one request (RRG-63).
+    max_turns: int = Field(default=20, ge=1)
     # Entries stay loosely typed until RRG-74 defines their schema.
     mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
