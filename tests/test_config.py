@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nar.config import ApprovalLevel, NarConfig, load_config
+from nar.config import DEFAULT_MODELS, ApprovalLevel, NarConfig, ProviderName, load_config
 from nar.config.paths import project_config, user_config
 from nar.errors import ConfigError
 
@@ -59,11 +59,11 @@ def test_only_user_file(home, project):
 
 
 def test_project_overrides_user(home, project):
-    write(home / "config.toml", 'model = "a"\nprovider = "p"\n')
+    write(home / "config.toml", 'model = "a"\nprovider = "ollama"\n')
     write(project / ".nar" / "config.toml", 'model = "b"\n')
     loaded = load_config(project)
     assert loaded.config.model == "b"
-    assert loaded.config.provider == "p"
+    assert loaded.config.provider is ProviderName.OLLAMA
     assert loaded.provenance["model"] == str(project / ".nar" / "config.toml")
     assert loaded.provenance["provider"] == str(home / "config.toml")
 
@@ -133,3 +133,42 @@ def test_describe_shows_sources(home, project):
     assert "provider = openrouter  (default)" in lines
     assert "approval = ask  (default)" in lines
     assert "mcp_servers = {}  (default)" in lines
+
+
+def test_model_follows_provider_when_unset(home, project):
+    write(project / ".nar" / "config.toml", 'provider = "ollama"\n')
+    loaded = load_config(project)
+    assert loaded.config.model == DEFAULT_MODELS[ProviderName.OLLAMA] == "qwen2.5-coder"
+    assert loaded.provenance.get("model", "default") == "default"
+    assert "model = qwen2.5-coder  (default)" in loaded.describe(project)
+
+
+def test_explicit_model_is_kept_for_any_provider(home, project):
+    write(project / ".nar" / "config.toml", 'provider = "anthropic"\nmodel = "claude-x"\n')
+    assert load_config(project).config.model == "claude-x"
+
+
+def test_unsupported_provider_lists_allowed(home, project):
+    path = write(project / ".nar" / "config.toml", 'provider = "openai"\n')
+    with pytest.raises(ConfigError) as info:
+        load_config(project)
+    message = info.value.message
+    assert "provider" in message
+    assert "anthropic, openrouter, ollama" in message
+    assert str(path) in message
+
+
+def test_command_line_overrides_project_file(home, project):
+    write(project / ".nar" / "config.toml", 'provider = "openrouter"\nmodel = "a"\n')
+    loaded = load_config(project, {"provider": "ollama", "model": "b"})
+    assert loaded.config.provider is ProviderName.OLLAMA
+    assert loaded.config.model == "b"
+    assert loaded.provenance["provider"] == "command line"
+    assert "provider = ollama  (command line)" in loaded.describe(project)
+
+
+def test_provider_flag_alone_uses_provider_default_model(home, project):
+    loaded = load_config(project, {"provider": "anthropic", "model": None})
+    assert loaded.config.model == "claude-sonnet-5-5"
+    assert loaded.provenance["provider"] == "command line"
+    assert "model" not in loaded.provenance

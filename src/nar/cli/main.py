@@ -11,14 +11,34 @@ import click
 
 from nar import __version__
 from nar.cli import repl
-from nar.config import load_config
+from nar.config import NarConfig, ProviderName, load_config
 from nar.context import load_project_instructions
 from nar.errors import NarError
 
 
-def run_single(prompt: str) -> None:
-    """Single mode placeholder (replaced by the agent loop in RRG-63)."""
-    click.echo(f"[placeholder] received: {prompt}")
+def run_single(prompt: str, config: NarConfig) -> None:
+    """Send one prompt to the model and stream the answer (the agent loop replaces it in RRG-63)."""
+    # Imported here: the provider SDKs are slow to import and other commands do not need them.
+    from nar.providers import Message, ResponseDone, StopReason, TextDelta, create_provider
+
+    provider = create_provider(config, on_retry=lambda notice: _warn(str(notice)))
+    text = ""
+    stop_reason = StopReason.END
+    for event in provider.stream([Message.user(prompt)]):
+        if isinstance(event, TextDelta):
+            text = event.text
+            click.echo(text, nl=False)
+        elif isinstance(event, ResponseDone):
+            stop_reason = event.response.stop_reason
+    if not text.endswith("\n"):
+        click.echo()
+    if stop_reason is StopReason.MAX_TOKENS:
+        # Reasoning models can spend the whole limit before writing any text.
+        _warn(f"warning: the answer was cut off: {provider.model} reached the output token limit")
+
+
+def _warn(message: str) -> None:
+    click.secho(message, fg="yellow", err=True)
 
 
 @click.command(
@@ -36,17 +56,24 @@ def run_single(prompt: str) -> None:
     is_flag=True,
     help="Print the effective configuration and where each value comes from, then exit.",
 )
+@click.option(
+    "--provider",
+    type=click.Choice([name.value for name in ProviderName]),
+    help="LLM provider for this run (overrides the configuration).",
+)
+@click.option("--model", help="Model for this run (overrides the configuration).")
 @click.argument("prompt", required=False)
-def cli(prompt: str | None, show_config: bool) -> None:
+def cli(prompt: str | None, show_config: bool, provider: str | None, model: str | None) -> None:
     cwd = Path.cwd()
-    loaded = load_config(cwd)  # invalid configuration stops startup here
+    # Invalid configuration stops startup here.
+    loaded = load_config(cwd, overrides={"provider": provider, "model": model})
     if show_config:
         for line in loaded.describe(cwd):
             click.echo(line)
         return
     instructions = load_project_instructions(cwd)
     if prompt is not None:
-        run_single(prompt)
+        run_single(prompt, loaded.config)
     else:
         repl.run(instructions)
 
