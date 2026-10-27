@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from nar.tools import ToolContext
-from nar.tools.read_file import ReadFileTool
+from nar.tools.read_file import MAX_FILE_BYTES, ReadFileTool
 
 
 @pytest.fixture
@@ -106,3 +106,71 @@ def test_crlf_and_missing_final_newline(tmp_path, context):
     result = read(context, path=str(path))
 
     assert result.output == "1\tone\n2\ttwo"
+
+
+def test_missing_file_reports_the_resolved_path(tmp_path, context):
+    result = read(context, path="nope.txt")
+
+    assert result.is_error
+    assert result.output == f"file not found: {(tmp_path / 'nope.txt').resolve()}"
+
+
+def test_directory_is_rejected(tmp_path, context):
+    result = read(context, path=str(tmp_path))
+
+    assert result.is_error
+    assert "path is a directory" in result.output
+    assert str(tmp_path.resolve()) in result.output
+
+
+def test_binary_file_is_rejected(tmp_path, context):
+    path = tmp_path / "pixel.png"
+    path.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(64))
+
+    result = read(context, path=str(path))
+
+    assert result.is_error
+    assert "appears to be binary" in result.output
+
+
+def test_nul_byte_after_the_sniffed_prefix_is_not_binary(tmp_path, context):
+    path = tmp_path / "late.txt"
+    path.write_bytes(b"a" * 9000 + b"\x00\n")
+
+    assert not read(context, path=str(path)).is_error
+
+
+def test_file_over_ten_megabytes_is_too_large(tmp_path, context):
+    path = tmp_path / "huge.txt"
+    with path.open("wb") as handle:
+        handle.truncate(MAX_FILE_BYTES + 1)
+
+    result = read(context, path=str(path))
+
+    assert result.is_error
+    assert "too large" in result.output
+    assert "search" in result.output
+
+
+def test_offset_past_the_end_says_how_many_lines_exist(tmp_path, context):
+    path = write_lines(tmp_path / "hundred.txt", 100)
+
+    result = read(context, path=str(path), offset=150)
+
+    assert result.is_error
+    assert result.output == "offset 150 is past the end of the file; the file has only 100 lines"
+
+
+def test_oserror_becomes_an_error_result(tmp_path, context, monkeypatch):
+    path = write_lines(tmp_path / "locked.txt", 3)
+
+    def deny(self, *args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "open", deny)
+
+    result = read(context, path=str(path))
+
+    assert result.is_error
+    assert "Permission denied" in result.output
+    assert str(path.resolve()) in result.output

@@ -48,10 +48,40 @@ class ReadFileTool(Tool):
         offset = arguments.get("offset", 1)
         limit = arguments.get("limit", DEFAULT_LIMIT)
 
-        shown, total = _read_range(path, offset, limit)
+        try:
+            problem = _check_readable(path)
+            if problem:
+                return ToolResult.error(problem)
+            shown, total = _read_range(path, offset, limit)
+        except OSError as exc:
+            return ToolResult.error(f"cannot read {path}: {exc.strerror or exc}")
+
         if total == 0:
             return ToolResult.ok("(file is empty)", summary="read 0 lines")
+        if offset > total:
+            return ToolResult.error(
+                f"offset {offset} is past the end of the file; the file has only {total} lines"
+            )
         return ToolResult.ok(_format(shown, offset, total), summary=f"read {len(shown)} lines")
+
+
+def _check_readable(path: Path) -> str | None:
+    """Return an error message when the path cannot be read as text, else None."""
+    if not path.exists():
+        return f"file not found: {path}"
+    if path.is_dir():
+        return f"path is a directory: {path}"
+    size = path.stat().st_size
+    if size > MAX_FILE_BYTES:
+        return (
+            f"file is too large ({size / (1024 * 1024):.1f} MB, limit "
+            f"{MAX_FILE_BYTES // (1024 * 1024)} MB); use a narrower tool such as a "
+            "search instead of reading the whole file"
+        )
+    with path.open("rb") as handle:
+        if b"\x00" in handle.read(BINARY_SNIFF_BYTES):
+            return f"file appears to be binary: {path}"
+    return None
 
 
 def _read_range(path: Path, offset: int, limit: int) -> tuple[list[str], int]:
