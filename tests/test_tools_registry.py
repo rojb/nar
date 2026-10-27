@@ -288,3 +288,11 @@ def test_default_registry_web_search_max_results_out_of_range_is_rejected(tmp_pa
 
     assert result.is_error
     assert "max_results" in result.output
+
+
+def test_display_survives_truncation():
+    registry = ToolRegistry()
+    registry.register(StubTool(behavior=lambda a: ToolResult.ok("o" * 50_000, display="[ ] a")))
+    result = registry.execute("stub", {"text": "x"})
+    assert len(result.output) <= 30_000
+    assert result.display == "[ ] a"

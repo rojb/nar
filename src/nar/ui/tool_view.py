@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from rich.console import Console
@@ -45,7 +45,9 @@ class ToolRenderer:
         summary = result.summary or _describe(result.output)
         self._print(f"[green]{self._indicator(True)}[/green] {escape(summary)}")
         if result.diff:
-            self._print_diff(result.diff)
+            self._print_lines(result.diff, _diff_style)
+        if result.display:
+            self._print_lines(result.display, _display_style)
 
     def _indicator(self, success: bool) -> str:
         unicode_ok = self.console.encoding.lower().startswith("utf")
@@ -56,14 +58,14 @@ class ToolRenderer:
     def _print(self, markup: str) -> None:
         self.console.print(markup, soft_wrap=True, highlight=False)
 
-    def _print_diff(self, diff: str) -> None:
-        # Text is never parsed as markup, so brackets in a diff print literally.
+    def _print_lines(self, block: str, style: Callable[[str], str]) -> None:
+        # Text is never parsed as markup, so brackets in a diff or checklist print literally.
         encoding = self.console.encoding
         lossy = not encoding.lower().startswith("utf")
-        for line in diff.splitlines():
+        for line in block.splitlines():
             if lossy:
                 line = line.encode(encoding, "replace").decode(encoding)
-            self.console.print(Text(line, style=_diff_style(line)), soft_wrap=True, highlight=False)
+            self.console.print(Text(line, style=style(line)), soft_wrap=True, highlight=False)
 
 
 def _diff_style(line: str) -> str:
@@ -76,6 +78,15 @@ def _diff_style(line: str) -> str:
         return "green"
     if line.startswith("-"):
         return "red"
+    return ""
+
+
+def _display_style(line: str) -> str:
+    # Checklist markers from the todos tool: done items fade, the current one stands out.
+    if line.startswith("[x]"):
+        return "dim"
+    if line.startswith("[>]"):
+        return "bold"
     return ""
 
 
