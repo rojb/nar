@@ -202,6 +202,8 @@ def test_default_registry_has_the_built_in_tools_in_order(tmp_path):
         "grep",
         "web_search",
         "web_fetch",
+        "todos",
+        "memory",
     ]
     for tool, definition in zip(
         (registry.get(name) for name in registry.names()), registry.definitions(), strict=True
@@ -226,6 +228,8 @@ def test_default_registry_required_arguments_and_approval_flags(tmp_path):
     assert required["grep"] == ["pattern"]
     assert required["web_search"] == ["query"]
     assert required["web_fetch"] == ["url"]
+    assert required["todos"] == ["todos"]
+    assert required["memory"] == ["action"]
     approval = {name: registry.get(name).requires_approval for name in registry.names()}
     assert approval == {
         "read_file": False,
@@ -236,6 +240,8 @@ def test_default_registry_required_arguments_and_approval_flags(tmp_path):
         "grep": False,
         "web_search": False,
         "web_fetch": False,
+        "todos": False,
+        "memory": False,
     }
 
 
