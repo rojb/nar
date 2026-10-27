@@ -100,6 +100,45 @@ def test_malformed_toml_names_file_and_line(home, project):
     assert "\n" not in info.value.message
 
 
+def write_bytes(path: Path, data: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
+def test_project_file_with_utf8_bom_loads(home, project):
+    # Windows PowerShell 5.1 `Set-Content -Encoding utf8` writes a BOM.
+    path = write_bytes(project / ".nar" / "config.toml", b'\xef\xbb\xbfapproval = "yolo"\n')
+    loaded = load_config(project)
+    assert loaded.config.approval is ApprovalLevel.YOLO
+    assert loaded.provenance["approval"] == str(path)
+
+
+def test_user_file_with_utf8_bom_merges_like_one_without(home, project):
+    write_bytes(home / "config.toml", b'\xef\xbb\xbfmodel = "a"\nprovider = "ollama"\n')
+    write(project / ".nar" / "config.toml", 'model = "b"\n')
+    loaded = load_config(project)
+    assert loaded.config.model == "b"
+    assert loaded.config.provider is ProviderName.OLLAMA
+    assert loaded.provenance["provider"] == str(home / "config.toml")
+
+
+def test_file_with_bom_and_malformed_toml_still_names_the_line(home, project):
+    path = write_bytes(project / ".nar" / "config.toml", b'\xef\xbb\xbfmodel = "ok"\nbroken = \n')
+    with pytest.raises(ConfigError) as info:
+        load_config(project)
+    assert str(path) in info.value.message
+    assert "line 2" in info.value.message
+
+
+def test_file_that_is_not_utf8_names_the_file(home, project):
+    path = write_bytes(project / ".nar" / "config.toml", b'approval = "\xff"\n')
+    with pytest.raises(ConfigError) as info:
+        load_config(project)
+    assert str(path) in info.value.message
+    assert info.value.path == path
+
+
 def test_invalid_value_names_setting_and_allowed(home, project):
     path = write(project / ".nar" / "config.toml", 'approval = "always"\n')
     with pytest.raises(ConfigError) as info:
