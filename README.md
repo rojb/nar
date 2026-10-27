@@ -169,6 +169,8 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 | `list_dir` | List one folder (not recursive); hides `.git`, `node_modules`, `.venv`, caches. | no |
 | `glob` | Find files by path pattern (`**/*.py`); at most 200 paths. | no |
 | `grep` | Search file contents with a regular expression; `path:line:text`, at most 100 matches. | no |
+| `web_search` | Search the web with DuckDuckGo (no API key); title, URL and snippet, 5 results by default. | no |
+| `web_fetch` | Download an http/https page and return it as Markdown (or text/JSON). | no |
 
 `write_file` and `edit_file` are marked as requiring approval, but nothing asks yet: the
 approval prompt arrives with RRG-69. Until then the agent runs them only with
@@ -198,6 +200,18 @@ a pattern without `/` matches file names at any depth (`test_*.py` finds `tests/
 ```bash
 python scripts/run_tool.py glob '{"pattern": "**/*.py", "path": "src"}'
 python scripts/run_tool.py grep '{"pattern": "def load_config", "glob": "*.py"}'
+```
+
+`web_search` sends the query to DuckDuckGo's HTML page, so it needs no account or key; if
+DuckDuckGo rate-limits you the tool says so and the agent can try later. `web_fetch` follows
+redirects, gives up after 20 seconds and stops downloading after 5 MB; HTML pages come back as
+Markdown with absolute links and without scripts, menus or footers, and images, PDFs and other
+binary files are refused. Both only read, so they need no approval; every URL they use is shown
+in the tool activity line.
+
+```bash
+python scripts/run_tool.py web_search '{"query": "httpx python documentation", "max_results": 3}'
+python scripts/run_tool.py web_fetch '{"url": "https://www.python-httpx.org/"}'
 ```
 
 ## Environment variables

@@ -200,6 +200,8 @@ def test_default_registry_has_the_built_in_tools_in_order(tmp_path):
         "list_dir",
         "glob",
         "grep",
+        "web_search",
+        "web_fetch",
     ]
     for tool, definition in zip(
         (registry.get(name) for name in registry.names()), registry.definitions(), strict=True
@@ -222,6 +224,8 @@ def test_default_registry_required_arguments_and_approval_flags(tmp_path):
     assert required["list_dir"] == []
     assert required["glob"] == ["pattern"]
     assert required["grep"] == ["pattern"]
+    assert required["web_search"] == ["query"]
+    assert required["web_fetch"] == ["url"]
     approval = {name: registry.get(name).requires_approval for name in registry.names()}
     assert approval == {
         "read_file": False,
@@ -230,6 +234,8 @@ def test_default_registry_required_arguments_and_approval_flags(tmp_path):
         "list_dir": False,
         "glob": False,
         "grep": False,
+        "web_search": False,
+        "web_fetch": False,
     }
 
 
@@ -273,3 +279,12 @@ def test_default_registry_grep_with_empty_pattern_is_rejected(tmp_path):
 
     assert result.is_error
     assert "pattern" in result.output
+
+
+def test_default_registry_web_search_max_results_out_of_range_is_rejected(tmp_path):
+    result = create_default_registry(tmp_path).execute(
+        "web_search", {"query": "x", "max_results": 50}
+    )
+
+    assert result.is_error
+    assert "max_results" in result.output
