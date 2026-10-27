@@ -6,10 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from nar.tools.base import Tool, ToolContext, ToolResult
+from nar.tools.files import (
+    BINARY_SNIFF_BYTES,
+    MAX_FILE_BYTES,
+    is_binary,
+    os_error_message,
+    resolve_path,
+)
 
 DEFAULT_LIMIT = 2000
-MAX_FILE_BYTES = 10 * 1024 * 1024
-BINARY_SNIFF_BYTES = 8192
+
+__all__ = ["DEFAULT_LIMIT", "MAX_FILE_BYTES", "ReadFileTool"]
 
 
 class ReadFileTool(Tool):
@@ -41,10 +48,7 @@ class ReadFileTool(Tool):
     requires_approval = False
 
     def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-        path = Path(arguments["path"])
-        if not path.is_absolute():
-            path = context.cwd / path
-        path = path.resolve()
+        path = resolve_path(arguments["path"], context.cwd)
         offset = arguments.get("offset", 1)
         limit = arguments.get("limit", DEFAULT_LIMIT)
 
@@ -54,7 +58,7 @@ class ReadFileTool(Tool):
                 return ToolResult.error(problem)
             shown, total = _read_range(path, offset, limit)
         except OSError as exc:
-            return ToolResult.error(f"cannot read {path}: {exc.strerror or exc}")
+            return ToolResult.error(os_error_message("read", path, exc))
 
         if total == 0:
             return ToolResult.ok("(file is empty)", summary="read 0 lines")
@@ -79,7 +83,7 @@ def _check_readable(path: Path) -> str | None:
             "search instead of reading the whole file"
         )
     with path.open("rb") as handle:
-        if b"\x00" in handle.read(BINARY_SNIFF_BYTES):
+        if is_binary(handle.read(BINARY_SNIFF_BYTES)):
             return f"file appears to be binary: {path}"
     return None
 

@@ -126,6 +126,31 @@ Windows PowerShell 5.1 strips the inner double quotes:
 python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 ```
 
+### Built-in tools
+
+| Tool | What it does | Approval |
+|---|---|---|
+| `read_file` | Read a text file with numbered lines. | no |
+| `write_file` | Create a file or replace it entirely; missing folders are created. | yes |
+| `edit_file` | Replace one exact piece of text; shows a diff. | yes |
+| `list_dir` | List one folder (not recursive); hides `.git`, `node_modules`, `.venv`, caches. | no |
+
+`write_file` and `edit_file` are marked as requiring approval, but nothing asks yet: the
+approval prompt arrives with RRG-69, so for now they run as soon as they are called.
+
+`edit_file` fails unless `old_string` matches exactly once, so include surrounding lines to make
+it unique. Line breaks written as `\n` match both LF and CRLF files; the new text uses the file's
+own line-break style (CRLF only when the file has more CRLF than LF) and every other byte of the
+file stays as it was. `write_file` writes the content as UTF-8 with no newline conversion.
+
+Create a file in a scratch folder, then edit it (the second command prints a colored diff):
+
+```bash
+T=$(mktemp -d)
+python scripts/run_tool.py write_file "{\"path\": \"$T/notes.txt\", \"content\": \"timeout = 10\nretries = 3\n\"}"
+python scripts/run_tool.py edit_file "{\"path\": \"$T/notes.txt\", \"old_string\": \"timeout = 10\", \"new_string\": \"timeout = 30\"}"
+```
+
 ## Environment variables
 
 | Variable | Effect |
