@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -16,6 +17,11 @@ SEARCH_URL = "https://html.duckduckgo.com/html/"
 DEFAULT_RESULTS = 5
 MAX_RESULTS = 10
 REFUSED = "DuckDuckGo refused the search (probably rate limiting); try again later"
+# DuckDuckGo sometimes answers a query that has results with its "no results" page;
+# asking again usually works.
+NO_RESULTS_MARK = "result--no-result"
+EMPTY_PAGE_RETRIES = 2
+RETRY_DELAY_SECONDS = 1.5
 
 
 @dataclass(frozen=True)
@@ -53,7 +59,12 @@ class WebSearchTool(Tool):
         limit = arguments.get("max_results", DEFAULT_RESULTS)
         try:
             with web.http_client() as client:
-                response = client.post(SEARCH_URL, data={"q": query})
+                for attempt in range(EMPTY_PAGE_RETRIES + 1):
+                    if attempt:
+                        time.sleep(RETRY_DELAY_SECONDS)
+                    response = client.post(SEARCH_URL, data={"q": query})
+                    if response.status_code != 200 or NO_RESULTS_MARK not in response.text:
+                        break
         except httpx.HTTPError as exc:
             message = web.request_error_message(SEARCH_URL, exc)
             return ToolResult.error(message.replace(SEARCH_URL, "DuckDuckGo"))
@@ -67,7 +78,11 @@ class WebSearchTool(Tool):
             return ToolResult.error(REFUSED)
         results = results[:limit]
         if not results:
-            return ToolResult.ok(f"(no results for {query})", summary="0 results")
+            return ToolResult.ok(
+                f"(no results for {query}; DuckDuckGo sometimes answers this way under load, "
+                "so try again or rephrase the query)",
+                summary="0 results",
+            )
         blocks = [
             f"{number}. {result.title}\n   {result.url}\n   {result.snippet}".rstrip()
             for number, result in enumerate(results, start=1)

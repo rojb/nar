@@ -99,11 +99,38 @@ def test_ads_skipped_and_redirect_links_decoded():
     assert results[1].url == "https://example.test/page"
 
 
+NO_RESULTS = page(
+    '<div class="result results_links web-result result--no-result">'
+    '<div class="no-results">No results found for <strong>zzqx</strong></div></div>'
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    monkeypatch.setattr("nar.tools.web_search.time.sleep", lambda seconds: None)
+
+
 def test_no_results(serve):
-    serve(lambda request: httpx.Response(200, text=page()))
+    requests = serve(lambda request: httpx.Response(200, text=NO_RESULTS))
     result = search(query="zzqx")
     assert not result.is_error
-    assert result.output == "(no results for zzqx)"
+    assert result.output.startswith("(no results for zzqx;")
+    assert "try again or rephrase" in result.output
+    assert len(requests) == 3  # the first answer and two retries
+
+
+def test_spurious_empty_page_is_retried(serve):
+    answers = [NO_RESULTS, TEN]
+    requests = serve(lambda request: httpx.Response(200, text=answers.pop(0)))
+    result = search(query="httpx python documentation")
+    assert result.summary == "5 results"
+    assert len(requests) == 2
+
+
+def test_page_without_results_or_mark_is_not_retried(serve):
+    requests = serve(lambda request: httpx.Response(200, text=page()))
+    assert search(query="zzqx").output.startswith("(no results for zzqx")
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize("status", [202, 403, 429])
