@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 
 from nar.errors import NarError, ToolError
-from nar.tools import Tool, ToolContext, ToolRegistry, ToolResult
+from nar.tools import Tool, ToolContext, ToolRegistry, ToolResult, create_default_registry
+from nar.tools.read_file import ReadFileTool
 
 SCHEMA = {
     "type": "object",
@@ -174,3 +175,40 @@ def test_long_error_is_truncated_and_stays_an_error():
     result = registry.execute("stub", {"text": "x"})
     assert result.is_error
     assert len(result.output) <= 30_000
+
+
+def test_default_registry_has_read_file(tmp_path):
+    registry = create_default_registry(tmp_path)
+    tool = ReadFileTool()
+
+    assert registry.names() == ["read_file"]
+    assert registry.definitions() == [
+        {"name": "read_file", "description": tool.description, "parameters": tool.parameters}
+    ]
+
+
+def test_default_registry_reads_relative_to_its_cwd(tmp_path):
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+
+    result = create_default_registry(tmp_path).execute("read_file", {"path": "a.txt"})
+
+    assert result.output == "1\thello"
+
+
+def test_default_registry_reports_missing_path_without_reading(tmp_path, monkeypatch):
+    monkeypatch.setattr(ReadFileTool, "execute", lambda *a, **k: pytest.fail("tool ran"))
+
+    result = create_default_registry(tmp_path).execute("read_file", {})
+
+    assert result.is_error
+    assert "missing required argument 'path'" in result.output
+
+
+def test_default_registry_rejects_a_string_offset(tmp_path):
+    result = create_default_registry(tmp_path).execute(
+        "read_file", {"path": "a.txt", "offset": "ten"}
+    )
+
+    assert result.is_error
+    assert "offset" in result.output
+    assert "integer" in result.output
