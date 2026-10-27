@@ -175,7 +175,7 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 | `memory` | Save, delete and list short facts that are given to the agent in every new session. | no |
 | `shell` | Run a command line in PowerShell (Windows) or bash/sh; returns exit code, stdout and stderr. | yes |
 
-`write_file` and `edit_file` are marked as requiring approval, but nothing asks yet: the
+`write_file`, `edit_file` and `shell` are marked as requiring approval, but nothing asks yet: the
 approval prompt arrives with RRG-69. Until then the agent runs them only with
 `approval = "yolo"` (see "How the agent works"); `scripts/run_tool.py` always runs them.
 
