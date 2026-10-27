@@ -82,3 +82,9 @@ def test_name_pattern_accepts(name):
 @pytest.mark.parametrize("name", ["read-file!", "", "1tool", "_tool", "a" * 65, "with space"])
 def test_name_pattern_rejects(name):
     assert not NAME_PATTERN.match(name)
+
+
+def test_display_defaults_to_none_and_ok_accepts_it():
+    assert ToolResult.ok("x").display is None
+    assert ToolResult.ok("x", display="[ ] a").display == "[ ] a"
+    assert ToolResult.error("x").display is None

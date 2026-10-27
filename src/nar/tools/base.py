@@ -44,10 +44,17 @@ class ToolResult:
     is_error: bool = False
     summary: str | None = None  # one-liner for the terminal, e.g. "read 5 lines"
     diff: str | None = None  # unified diff for the terminal; None for most tools
+    display: str | None = None  # extra lines for the user only, e.g. a task checklist
 
     @classmethod
-    def ok(cls, output: str, summary: str | None = None, diff: str | None = None) -> ToolResult:
-        return cls(output=output, summary=summary, diff=diff)
+    def ok(
+        cls,
+        output: str,
+        summary: str | None = None,
+        diff: str | None = None,
+        display: str | None = None,
+    ) -> ToolResult:
+        return cls(output=output, summary=summary, diff=diff, display=display)
 
     @classmethod
     def error(cls, message: str) -> ToolResult:

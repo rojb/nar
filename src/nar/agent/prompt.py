@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 
@@ -24,6 +25,11 @@ of everything).
 - When a tool returns an error, read the message, fix the call and try again, or explain \
 what went wrong.
 - Refer to files with paths relative to the working directory.
+- For tasks with several steps, first write a plan with the todos tool, keep exactly one \
+task in progress, and update the list as you finish each step.
+- When the user states a lasting preference or an important fact about themselves or the \
+project, save it with the memory tool (a short key and a one-sentence value). Follow the \
+facts listed under Memory.
 - Keep answers concise and direct. When you have what you need, answer without calling \
 more tools."""
 
@@ -31,11 +37,12 @@ more tools."""
 def build_system_prompt(
     cwd: Path,
     instructions: ProjectInstructions | None = None,
+    memory: Mapping[str, str] | None = None,
     *,
     platform_name: str | None = None,
     today: date | None = None,
 ) -> str:
-    """Identity, guidelines, environment and, when present, the project's ``AGENTS.md``."""
+    """Identity, guidelines, environment, then saved memory and ``AGENTS.md`` when present."""
     system = platform_name or f"{platform.system()} {platform.release()}".strip()
     environment = (
         "# Environment\n"
@@ -44,6 +51,9 @@ def build_system_prompt(
         f"- Date: {(today or date.today()).isoformat()}"
     )
     sections = [IDENTITY, GUIDELINES, environment]
+    if memory:
+        facts = "\n".join(f"- {key}: {value}" for key, value in memory.items())
+        sections.append(f"# Memory (saved in earlier sessions)\n{facts}")
     if instructions is not None:
         sections.append(
             f"# Project instructions (from {instructions.path})\n"

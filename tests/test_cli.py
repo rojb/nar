@@ -416,3 +416,54 @@ def test_repl_missing_key_fails_at_startup(runner, workdir):
     result = runner.invoke(main, [], input="hello\nexit\n")
     assert result.exit_code == 1
     assert "OPENROUTER_API_KEY is not set" in result.stderr
+
+
+def test_memory_saved_in_one_run_reaches_the_next_system_prompt(runner, workdir, fake_provider):
+    save = ToolCall(
+        "m1", "memory", {"action": "save", "key": "language", "value": "Answer in Spanish"}
+    )
+    fake_provider.script = [
+        LLMResponse("", (save,), StopReason.TOOL_CALLS),
+        LLMResponse("Saved."),
+    ]
+    first = runner.invoke(main, ["remember that I want answers in Spanish"])
+    assert first.exit_code == 0
+    assert 'memory(action="save"' in first.stderr
+
+    seen = {}
+
+    def stream(messages, *, system=None, tools=(), max_tokens=100):
+        seen["system"] = system
+        yield ResponseDone(LLMResponse("You prefer Spanish."))
+
+    fake_provider.stream = stream
+    second = runner.invoke(main, ["what do you remember about me?"])
+    assert second.exit_code == 0
+    assert "# Memory (saved in earlier sessions)\n- language: Answer in Spanish" in seen["system"]
+
+
+def test_corrupt_memory_file_warns_and_still_runs(runner, workdir, fake_provider, tmp_path):
+    (tmp_path / "home" / "memory.json").write_text("not json", encoding="utf-8")
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 0
+    assert "starting without saved memory" in result.stderr
+    assert result.stdout == "Hello there\n"
+
+
+def test_todos_checklist_shown_on_stderr(runner, fake_provider):
+    write = ToolCall(
+        "t1",
+        "todos",
+        {
+            "todos": [
+                {"content": "Read file", "status": "completed"},
+                {"content": "Summarize", "status": "in_progress"},
+            ]
+        },
+    )
+    fake_provider.script = [LLMResponse("", (write,), StopReason.TOOL_CALLS), LLMResponse("Done.")]
+    result = runner.invoke(main, ["plan it"])
+    assert result.exit_code == 0
+    assert "[x] Read file" in result.stderr
+    assert "[>] Summarize" in result.stderr
+    assert result.stdout == "Done.\n"

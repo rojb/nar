@@ -139,3 +139,30 @@ def test_cp1252_console_replaces_unencodable_diff_characters():
     renderer, file = make("cp1252")
     renderer.show_result("x", ToolResult.ok("o", summary="done", diff="-a\n+中"))
     assert "+?" in text(file)
+
+
+CHECKLIST = "[x] Read config loader\n[>] Add max_turns\n[ ] Update README"
+
+
+def test_display_printed_below_success_line_with_checklist_styles():
+    renderer, file = make_color()
+    renderer.show_result("todos", ToolResult.ok("o", summary="3 tasks", display=CHECKLIST))
+    lines = file.getvalue().splitlines()
+    assert "3 tasks" in lines[0]
+    assert "\x1b[2m" in line_with(file.getvalue(), "[x] Read config loader")
+    assert "\x1b[1m" in line_with(file.getvalue(), "[>] Add max_turns")
+    assert "\x1b[" not in line_with(file.getvalue(), "[ ] Update README")
+
+
+def test_display_after_diff_and_literal():
+    renderer, file = make()
+    result = ToolResult.ok("o", summary="s", diff="-a\n+b", display="[red]x[/red]")
+    renderer.show_result("x", result)
+    out = text(file)
+    assert out.index("+b") < out.index("[red]x[/red]")
+
+
+def test_error_result_never_prints_display():
+    renderer, file = make()
+    renderer.show_result("x", ToolResult(output="boom", is_error=True, display="[ ] a"))
+    assert "[ ] a" not in text(file)

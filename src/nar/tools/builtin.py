@@ -9,8 +9,10 @@ from nar.tools.edit_file import EditFileTool
 from nar.tools.glob import GlobTool
 from nar.tools.grep import GrepTool
 from nar.tools.list_dir import ListDirTool
+from nar.tools.memory import MemoryTool
 from nar.tools.read_file import ReadFileTool
 from nar.tools.registry import ToolRegistry
+from nar.tools.todos import TodosTool
 from nar.tools.web_fetch import WebFetchTool
 from nar.tools.web_search import WebSearchTool
 from nar.tools.write_file import WriteFileTool
@@ -27,6 +29,8 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
         GrepTool(),
         WebSearchTool(),
         WebFetchTool(),
+        TodosTool(),
+        MemoryTool(),
     ):
         registry.register(tool)
 
