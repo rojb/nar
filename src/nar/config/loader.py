@@ -73,8 +73,8 @@ def _read_toml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
-        with path.open("rb") as handle:
-            return tomllib.load(handle)
+        # utf-8-sig drops a leading BOM, which Windows PowerShell 5.1 and old Notepad write.
+        return tomllib.loads(path.read_bytes().decode("utf-8-sig"))
     except tomllib.TOMLDecodeError as exc:
         match = re.search(r"line (\d+)", str(exc))
         where = f"line {match.group(1)}" if match else "unknown line"
