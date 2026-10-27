@@ -15,6 +15,7 @@ from nar.context import ProjectInstructions
 from nar.context.manager import ContextManager
 from nar.providers import factory
 from nar.tools import create_default_registry
+from nar.tools.memory import MemoryFileError, MemoryStore, memory_path
 from nar.ui.agent_view import AgentView
 
 
@@ -32,7 +33,7 @@ def create_agent(
     """Provider, built-in tools and a fresh conversation; a missing API key fails here."""
     provider = factory.create_provider(config, on_retry=view.retry)
     view.waiting_text = f"waiting for {provider.model}..."
-    context = ContextManager(build_system_prompt(cwd, instructions))
+    context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
     return Agent(
         provider,
         create_default_registry(cwd),
@@ -56,3 +57,11 @@ def run_request(agent: Agent, view: AgentView, prompt: str) -> Outcome:
     finally:
         view.finish()
     return outcome
+
+
+def _saved_memory(view: AgentView) -> dict[str, str]:
+    try:
+        return MemoryStore(memory_path()).load()
+    except MemoryFileError as exc:
+        view.warn(f"warning: {exc.message}; starting without saved memory")
+        return {}
