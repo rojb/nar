@@ -1,3 +1,12 @@
+import os
+import subprocess
+import sys
+import textwrap
+import time
+from pathlib import Path
+
+import pytest
+
 from nar.tools.shell_process import (
     POWERSHELL_PREFIX,
     POWERSHELL_SUFFIX,
@@ -5,6 +14,7 @@ from nar.tools.shell_process import (
     StreamCapture,
     build_argv,
     find_shell,
+    run_command,
 )
 
 
@@ -186,3 +196,174 @@ def test_drain_reads_until_end_of_file():
 
     assert capture.text() == "abcd\nef"
     assert capture.lines == 2
+
+
+# --- run_command (real shells) -------------------------------------------------
+
+SHELL = find_shell()
+needs_shell = pytest.mark.skipif(SHELL is None, reason="no shell installed")
+WINDOWS = sys.platform == "win32"
+
+
+def shell_command(tmp_path, source, name="script.py"):
+    """Command line that runs a small Python script in the active shell."""
+    script = tmp_path / name
+    script.write_text(textwrap.dedent(source), encoding="utf-8")
+    if SHELL.powershell:
+        return f"& '{sys.executable}' '{script}'"
+    return f"'{sys.executable}' '{script}'"
+
+
+def run(tmp_path, source, timeout=30):
+    command = shell_command(tmp_path, source)
+    return run_command(build_argv(SHELL, command), tmp_path, timeout)
+
+
+def process_exists(pid):
+    if WINDOWS:
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True
+        ).stdout
+        return str(pid) in out
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def wait_until(predicate, seconds=10):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.1)
+    return predicate()
+
+
+@needs_shell
+def test_run_returns_exit_code_zero_and_stdout(tmp_path):
+    result = run(tmp_path, "print('hi')")
+
+    assert result.exit_code == 0
+    assert result.stdout.text().strip() == "hi"
+    assert not result.timed_out
+
+
+@needs_shell
+def test_run_keeps_a_non_zero_exit_code(tmp_path):
+    result = run(tmp_path, "import sys\nsys.exit(3)")
+
+    assert result.exit_code == 3
+
+
+@needs_shell
+def test_run_separates_stderr_from_stdout(tmp_path):
+    result = run(tmp_path, "import sys\nsys.stderr.write('oops')")
+
+    assert result.stderr.text().strip() == "oops"
+    assert result.stdout.total == 0
+
+
+@needs_shell
+def test_run_closes_standard_input(tmp_path):
+    started = time.monotonic()
+    result = run(tmp_path, "import sys\nprint(repr(sys.stdin.read()))", timeout=20)
+
+    assert time.monotonic() - started < 15
+    assert result.exit_code == 0
+    assert result.stdout.text().strip() == "''"
+
+
+@needs_shell
+def test_run_uses_the_given_working_directory(tmp_path):
+    result = run(tmp_path, "import os\nprint(os.getcwd())")
+
+    assert Path(result.stdout.text().strip()).resolve() == tmp_path.resolve()
+
+
+@needs_shell
+def test_timeout_kills_the_command_and_keeps_partial_output(tmp_path):
+    started = time.monotonic()
+    result = run(
+        tmp_path,
+        "import time\nprint('started', flush=True)\ntime.sleep(30)",
+        timeout=2,
+    )
+
+    assert time.monotonic() - started < 8
+    assert result.timed_out
+    assert result.exit_code is None
+    assert "started" in result.stdout.text()
+
+
+CHILD_SPAWNER = r"""
+    import subprocess, sys, time
+    child = (
+        "import time\n"
+        "while True:\n"
+        "    open(r'{ticks}', 'a').write('x')\n"
+        "    time.sleep(0.1)\n"
+    )
+    subprocess.Popen([sys.executable, "-c", child])
+    time.sleep(60)
+"""
+
+
+@needs_shell
+def test_timeout_kills_the_whole_process_tree(tmp_path):
+    ticks = tmp_path / "ticks.txt"
+    source = CHILD_SPAWNER.replace("{ticks}", ticks.as_posix())
+
+    result = run(tmp_path, source, timeout=3)
+
+    assert result.timed_out
+    assert ticks.exists(), "the grandchild never started"
+    size = ticks.stat().st_size
+    time.sleep(1)
+    assert ticks.stat().st_size == size
+
+
+@needs_shell
+def test_endless_output_is_bounded_and_times_out(tmp_path):
+    result = run(
+        tmp_path,
+        "import sys\nwhile True:\n    sys.stdout.write('x' * 1000 + chr(10))",
+        timeout=2,
+    )
+
+    assert result.timed_out
+    assert len(result.stdout.head) + len(result.stdout.tail) <= 14_000
+    assert result.stdout.total > 14_000
+
+
+@needs_shell
+def test_keyboard_interrupt_kills_the_tree_and_propagates(tmp_path, monkeypatch):
+    pids = tmp_path / "pids.txt"
+    source = f"""
+        import os, subprocess, sys, time
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        open(r'{pids}', 'w').write(f"{{os.getpid()}} {{child.pid}}")
+        time.sleep(60)
+    """
+    command = shell_command(tmp_path, source)
+    real_sleep = time.sleep
+
+    def interrupting_sleep(seconds):
+        if pids.exists() and pids.read_text().count(" ") == 1:
+            raise KeyboardInterrupt
+        real_sleep(seconds)
+
+    monkeypatch.setattr(time, "sleep", interrupting_sleep)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_command(build_argv(SHELL, command), tmp_path, 60)
+
+    monkeypatch.undo()
+    parent, child = (int(value) for value in pids.read_text().split())
+    assert wait_until(lambda: not process_exists(parent) and not process_exists(child))
+
+
+def test_a_program_that_does_not_exist_raises_oserror(tmp_path):
+    with pytest.raises(OSError):
+        run_command([str(tmp_path / "no-such-program.exe")], tmp_path, 5)

@@ -11,13 +11,18 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import BinaryIO
 
 STREAM_HEAD_BYTES = 4_000
 STREAM_TAIL_BYTES = 10_000
 READ_CHUNK_BYTES = 65_536
+POLL_SECONDS = 0.05
+READER_JOIN_SECONDS = 2
 
 # Silences progress output and makes the shell's own output UTF-8 without a BOM.
 POWERSHELL_PREFIX = (
@@ -136,3 +141,67 @@ def kill_tree(proc: subprocess.Popen) -> None:
         proc.kill()
     except OSError:
         pass
+
+
+@dataclass(frozen=True)
+class RunResult:
+    exit_code: int | None  # None when the command was killed
+    stdout: StreamCapture
+    stderr: StreamCapture
+    timed_out: bool
+
+
+def run_command(argv: list[str], cwd: Path, timeout: float) -> RunResult:
+    """Run ``argv`` in ``cwd`` and wait at most ``timeout`` seconds.
+
+    Raises ``OSError`` when the program cannot start. On any ``BaseException`` while
+    waiting (Ctrl+C above all) the process tree is killed before re-raising.
+    """
+    if sys.platform == "win32":
+        isolation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        isolation = {"start_new_session": True}
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        **isolation,
+    )
+    stdout, stderr = StreamCapture(), StreamCapture()
+    readers = [
+        threading.Thread(target=capture.drain, args=(pipe,), daemon=True)
+        for capture, pipe in ((stdout, proc.stdout), (stderr, proc.stderr))
+    ]
+    for reader in readers:
+        reader.start()
+
+    timed_out = False
+    try:
+        deadline = time.monotonic() + timeout
+        # Short polling slices keep the wait interruptible by Ctrl+C on Windows.
+        while proc.poll() is None:
+            if time.monotonic() >= deadline:
+                timed_out = True
+                kill_tree(proc)
+                proc.wait()
+                break
+            time.sleep(POLL_SECONDS)
+    except BaseException:
+        kill_tree(proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+
+    # A background process that kept the pipes open must not block the call forever.
+    for reader in readers:
+        reader.join(READER_JOIN_SECONDS)
+    return RunResult(
+        exit_code=None if timed_out else proc.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        timed_out=timed_out,
+    )
