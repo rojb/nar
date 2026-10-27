@@ -65,7 +65,7 @@ again, until the model answers without tools or `max_turns` model calls were mad
 - **Turn limit:** when `max_turns` is reached `nar` stops with a message; single mode then exits
   with code 1.
 - **Provider errors** in interactive mode are shown on one line and the session continues.
-- **Tools that need approval** (none of the current built-in tools) only run with
+- **Tools that need approval** (`write_file`, `edit_file` and `shell`) only run with
   `approval = "yolo"` until the approval prompts of RRG-69 exist; otherwise the model is told it
   cannot use them.
 - **System prompt:** it tells the model it is `nar`, how to use its tools, the working
@@ -173,6 +173,7 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 | `web_fetch` | Download an http/https page and return it as Markdown (or text/JSON). | no |
 | `todos` | Keep the agent's task list for the session, shown as a `[ ]`/`[>]`/`[x]` checklist. | no |
 | `memory` | Save, delete and list short facts that are given to the agent in every new session. | no |
+| `shell` | Run a command line in PowerShell (Windows) or bash/sh; returns exit code, stdout and stderr. | yes |
 
 `write_file` and `edit_file` are marked as requiring approval, but nothing asks yet: the
 approval prompt arrives with RRG-69. Until then the agent runs them only with
@@ -232,6 +233,34 @@ export NAR_HOME=$(mktemp -d)
 python scripts/run_tool.py memory '{"action": "save", "key": "language", "value": "Answer in Spanish"}'
 python scripts/run_tool.py memory '{"action": "list"}'
 python scripts/run_tool.py todos '{"todos": [{"content": "Read the code", "status": "completed"}, {"content": "Write the summary", "status": "in_progress"}]}'
+```
+
+### The shell tool
+
+`shell` runs one command line and returns its exit code, standard output and standard error.
+Each call starts a fresh shell in the working directory, so `cd` and variables do not carry
+over; standard input is closed, so interactive programs cannot work.
+
+- **Shell used:** on Windows, PowerShell 7 (`pwsh`) when installed, otherwise Windows PowerShell
+  (`powershell`); on Linux and macOS, `bash`, otherwise `sh`. The tool description tells the
+  model which one it is.
+- **Timeout:** `timeout` seconds (default 120, at most 600). A command that is still running
+  is killed together with the processes it started, and the call returns an error that keeps
+  the output printed so far.
+- **Output limit:** each stream keeps its first 4,000 and last 10,000 bytes, with a
+  `[... N bytes omitted ...]` marker in between.
+- **Exit codes:** a non-zero exit code is a normal result, not a tool error (`pytest` exits 1
+  when tests fail). The first line of the output is `exit code: N` and the terminal summary
+  reads `exit N · ...`.
+- **Blocklist:** a few destructive commands (`rm -rf /`, formatting a disk, shutting the
+  machine down, ...) are refused even at `yolo`. It is a safety net against mistakes, not a
+  sandbox: obfuscated or indirect commands are not caught.
+- **Approval:** `shell` requires approval, so the agent runs it only with `approval = "yolo"`
+  until the approval prompts of RRG-69 exist; `scripts/run_tool.py` always runs it.
+
+```bash
+python scripts/run_tool.py shell '{"command": "python --version"}'
+python scripts/run_tool.py shell '{"command": "python --version", "timeout": 30}'
 ```
 
 ## Environment variables
