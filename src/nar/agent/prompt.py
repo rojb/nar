@@ -17,6 +17,8 @@ GUIDELINES = """\
 # How to work
 - Use your tools to look at the project. Read a file before answering questions about it \
 or describing what it contains; never guess or invent file contents or tool results.
+- To find files or code, search with glob (file names) and grep (file contents) before \
+reading files.
 - Prefer small, focused tool calls (for example, read the relevant part of a file instead \
 of everything).
 - When a tool returns an error, read the message, fix the call and try again, or explain \

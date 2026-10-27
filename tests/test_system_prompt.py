@@ -19,6 +19,7 @@ def test_identity_and_environment():
     assert f"Working directory: {CWD}" in prompt
     assert "Operating system: Linux 6.8" in prompt
     assert "Date: 2026-10-27" in prompt
+    assert "search with glob (file names) and grep (file contents)" in prompt
 
 
 def test_project_instructions_included_under_heading():
