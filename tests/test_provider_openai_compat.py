@@ -314,11 +314,14 @@ def test_deepseek_insufficient_balance_fails_once():
 
 
 def test_deepseek_unknown_model_names_model():
-    api = FakeAPI((400, {"error": {"message": "Model Not Exist"}}))
+    message = (
+        "The supported API model names are deepseek-flash, deepseek-v4-pro, "
+        "but you passed no-such-model."
+    )
+    api = FakeAPI((400, {"error": {"message": message}}))
     with pytest.raises(ProviderError) as info:
         deepseek(api, "no-such-model").complete([Message.user("x")])
-    assert "no-such-model" in info.value.message
-    assert "deepseek" in info.value.message
+    assert info.value.message == "model 'no-such-model' was not found by deepseek"
     assert len(api.requests) == 1
 
 

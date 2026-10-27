@@ -202,7 +202,9 @@ class DeepSeekProvider(OpenAICompatibleProvider):
                 model,
                 api_key_env=DEEPSEEK_API_KEY_ENV,
                 status_hints={402: DEEPSEEK_BALANCE_HINT},
-                unknown_model_pattern="model not exist",
+                # Observed 2026-10-27: 400 "The supported API model names are ...,
+                # but you passed <model>."
+                unknown_model_pattern="supported API model names are",
             ),
             # Thinking mode (DeepSeek's default) needs reasoning_content echoed back
             # on tool turns, which the message format cannot carry.
