@@ -204,6 +204,7 @@ def test_default_registry_has_the_built_in_tools_in_order(tmp_path):
         "web_fetch",
         "todos",
         "memory",
+        "shell",
     ]
     for tool, definition in zip(
         (registry.get(name) for name in registry.names()), registry.definitions(), strict=True
@@ -230,6 +231,7 @@ def test_default_registry_required_arguments_and_approval_flags(tmp_path):
     assert required["web_fetch"] == ["url"]
     assert required["todos"] == ["todos"]
     assert required["memory"] == ["action"]
+    assert required["shell"] == ["command"]
     approval = {name: registry.get(name).requires_approval for name in registry.names()}
     assert approval == {
         "read_file": False,
@@ -242,6 +244,7 @@ def test_default_registry_required_arguments_and_approval_flags(tmp_path):
         "web_fetch": False,
         "todos": False,
         "memory": False,
+        "shell": True,
     }
 
 
@@ -302,3 +305,27 @@ def test_display_survives_truncation():
     result = registry.execute("stub", {"text": "x"})
     assert len(result.output) <= 30_000
     assert result.display == "[ ] a"
+
+
+def test_default_registry_shell_timeout_is_a_bounded_integer(tmp_path):
+    parameters = create_default_registry(tmp_path).get("shell").parameters
+    timeout = parameters["properties"]["timeout"]
+
+    assert timeout["type"] == "integer"
+    assert timeout["minimum"] == 1
+    assert timeout["maximum"] == 600
+
+
+def test_approval_gate_refuses_shell_below_yolo(tmp_path):
+    from nar.agent.loop import approval_gate
+    from nar.config import ApprovalLevel
+
+    shell = create_default_registry(tmp_path).get("shell")
+    arguments = {"command": "python --version"}
+
+    refused = approval_gate(ApprovalLevel.ASK)(shell, arguments)
+
+    assert refused is not None
+    assert refused.is_error
+    assert "shell" in refused.output
+    assert approval_gate(ApprovalLevel.YOLO)(shell, arguments) is None
