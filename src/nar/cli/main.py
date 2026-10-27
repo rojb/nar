@@ -12,33 +12,19 @@ import click
 from nar import __version__
 from nar.cli import repl
 from nar.config import NarConfig, ProviderName, load_config
-from nar.context import load_project_instructions
+from nar.context import ProjectInstructions, load_project_instructions
 from nar.errors import NarError
 
 
-def run_single(prompt: str, config: NarConfig) -> None:
-    """Send one prompt to the model and stream the answer (the agent loop replaces it in RRG-63)."""
+def run_single(prompt: str, config: NarConfig, instructions: ProjectInstructions | None) -> int:
+    """Run the agent on one prompt; returns the exit code."""
     # Imported here: the provider SDKs are slow to import and other commands do not need them.
-    from nar.providers import Message, ResponseDone, StopReason, TextDelta, create_provider
+    from nar.cli.runner import Outcome, create_agent, run_request
+    from nar.ui.agent_view import AgentView
 
-    provider = create_provider(config, on_retry=lambda notice: _warn(str(notice)))
-    text = ""
-    stop_reason = StopReason.END
-    for event in provider.stream([Message.user(prompt)]):
-        if isinstance(event, TextDelta):
-            text = event.text
-            click.echo(text, nl=False)
-        elif isinstance(event, ResponseDone):
-            stop_reason = event.response.stop_reason
-    if not text.endswith("\n"):
-        click.echo()
-    if stop_reason is StopReason.MAX_TOKENS:
-        # Reasoning models can spend the whole limit before writing any text.
-        _warn(f"warning: the answer was cut off: {provider.model} reached the output token limit")
-
-
-def _warn(message: str) -> None:
-    click.secho(message, fg="yellow", err=True)
+    view = AgentView()
+    agent = create_agent(config, Path.cwd(), instructions, view)
+    return 1 if run_request(agent, view, prompt) is Outcome.TURN_LIMIT else 0
 
 
 @click.command(
@@ -63,19 +49,19 @@ def _warn(message: str) -> None:
 )
 @click.option("--model", help="Model for this run (overrides the configuration).")
 @click.argument("prompt", required=False)
-def cli(prompt: str | None, show_config: bool, provider: str | None, model: str | None) -> None:
+def cli(prompt: str | None, show_config: bool, provider: str | None, model: str | None) -> int:
     cwd = Path.cwd()
     # Invalid configuration stops startup here.
     loaded = load_config(cwd, overrides={"provider": provider, "model": model})
     if show_config:
         for line in loaded.describe(cwd):
             click.echo(line)
-        return
+        return 0
     instructions = load_project_instructions(cwd)
     if prompt is not None:
-        run_single(prompt, loaded.config)
-    else:
-        repl.run(instructions)
+        return run_single(prompt, loaded.config, instructions)
+    repl.run(loaded.config, instructions)
+    return 0
 
 
 def _debug_enabled() -> bool:
@@ -87,8 +73,9 @@ def main(argv: list[str] | None = None) -> None:
     try:
         result = cli.main(args=argv, standalone_mode=False)
     except click.exceptions.Abort:
-        click.secho("Aborted!", fg="red", err=True)
-        sys.exit(1)
+        # Ctrl+C: Click turns KeyboardInterrupt into Abort. 130 is the shell's SIGINT code.
+        click.secho("cancelled", fg="yellow", err=True)
+        sys.exit(130)
     except click.ClickException as exc:
         exc.show()
         sys.exit(exc.exit_code)

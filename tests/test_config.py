@@ -172,3 +172,17 @@ def test_provider_flag_alone_uses_provider_default_model(home, project):
     assert loaded.config.model == "claude-sonnet-5-5"
     assert loaded.provenance["provider"] == "command line"
     assert "model" not in loaded.provenance
+
+
+def test_max_turns_default_and_source(home, project):
+    loaded = load_config(project)
+    assert loaded.config.max_turns == 20
+    assert "max_turns = 20  (default)" in loaded.describe(project)
+
+
+def test_invalid_max_turns_names_setting_and_file(home, project):
+    path = write(project / ".nar" / "config.toml", "max_turns = 0\n")
+    with pytest.raises(ConfigError) as info:
+        load_config(project)
+    assert "max_turns" in info.value.message
+    assert str(path) in info.value.message

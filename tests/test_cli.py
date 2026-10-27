@@ -6,8 +6,8 @@ from click.testing import CliRunner
 
 from nar import __version__
 from nar.cli import main
-from nar.errors import NarError
-from nar.providers import LLMResponse, ResponseDone, StopReason, TextDelta
+from nar.errors import NarError, ProviderError
+from nar.providers import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
 from nar.providers.retry import RetryNotice
 
 # `nar.cli.main` the attribute is the function; fetch the module explicitly.
@@ -39,31 +39,55 @@ def _clean_env(monkeypatch, tmp_path):
 
 
 class FakeProvider:
-    def __init__(self, config, on_retry, deltas=("Hello", " there")):
-        self.config = config
-        self.on_retry = on_retry
-        self.deltas = deltas
-        self.prompts = []
+    """Answers each model call from ``script`` (LLMResponse, exception or callable).
 
-    def stream(self, messages, **kwargs):
-        self.prompts.append(messages[0].content)
-        for text in self.deltas:
-            yield TextDelta(text)
-        yield ResponseDone(LLMResponse("".join(self.deltas)))
+    With an empty script it answers "Hello there" in two pieces.
+    """
+
+    name = "fake"
+
+    def __init__(self):
+        self.model = "fake-model"
+        self.config = None
+        self.on_retry = None
+        self.script = []
+        self.requests = []
+
+    @property
+    def prompts(self):
+        return [request[-1].content for request in self.requests if request[-1].role == "user"]
+
+    def stream(self, messages, *, system=None, tools=(), max_tokens=100):
+        self.requests.append(list(messages))
+        step = self.script.pop(0) if self.script else LLMResponse("Hello there")
+        if isinstance(step, BaseException):
+            raise step
+        if callable(step):
+            yield from step()
+            return
+        if step.content == "Hello there":
+            yield TextDelta("Hello")
+            yield TextDelta(" there")
+        elif step.content:
+            yield TextDelta(step.content)
+        yield ResponseDone(step)
 
 
 @pytest.fixture
 def fake_provider(monkeypatch):
-    """Replace the provider factory; the fixture value is the provider built last."""
-    holder = FakeProvider(None, None)
+    """Replace the provider factory with one that returns a FakeProvider."""
+    provider = FakeProvider()
 
     def create(config, on_retry=None):
-        holder.config, holder.on_retry = config, on_retry
-        return holder
+        provider.config, provider.on_retry = config, on_retry
+        return provider
 
     monkeypatch.setattr("nar.providers.factory.create_provider", create)
-    monkeypatch.setattr("nar.providers.create_provider", create)
-    return holder
+    return provider
+
+
+def read_file_call(path="pyproject.toml"):
+    return LLMResponse("", (ToolCall("c1", "read_file", {"path": path}),), StopReason.TOOL_CALLS)
 
 
 def test_version(runner):
@@ -85,6 +109,7 @@ def test_single_mode_streams_answer_and_exits_zero(runner, fake_provider):
     assert result.exit_code == 0
     assert result.stdout == "Hello there\n"
     assert fake_provider.prompts == ["hola"]
+    assert result.stderr == ""
 
 
 def test_usage_error_keeps_click_exit_code(runner):
@@ -93,7 +118,7 @@ def test_usage_error_keeps_click_exit_code(runner):
 
 
 def test_nar_error_is_one_line_without_traceback(runner, monkeypatch):
-    def boom(prompt, config):
+    def boom(prompt, config, instructions):
         raise NarError("it broke", exit_code=3)
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -104,7 +129,7 @@ def test_nar_error_is_one_line_without_traceback(runner, monkeypatch):
 
 
 def test_nar_error_traceback_with_debug(runner, monkeypatch):
-    def boom(prompt, config):
+    def boom(prompt, config, instructions):
         raise NarError("it broke")
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -116,7 +141,7 @@ def test_nar_error_traceback_with_debug(runner, monkeypatch):
 
 
 def test_unexpected_error_generic_message_and_hint(runner, monkeypatch):
-    def boom(prompt, config):
+    def boom(prompt, config, instructions):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -127,19 +152,19 @@ def test_unexpected_error_generic_message_and_hint(runner, monkeypatch):
     assert "Traceback" not in result.stderr
 
 
-def test_repl_exit(runner):
+def test_repl_exit(runner, fake_provider):
     result = runner.invoke(main, [], input="\n   \nexit\n")
     assert result.exit_code == 0
     assert "Traceback" not in result.output
 
 
-def test_repl_eof_exits_zero(runner):
+def test_repl_eof_exits_zero(runner, fake_provider):
     result = runner.invoke(main, [], input="\n")
     assert result.exit_code == 0
     assert "Traceback" not in result.output
 
 
-def test_repl_ctrl_c_exits_zero(runner, monkeypatch):
+def test_repl_ctrl_c_exits_zero(runner, monkeypatch, fake_provider):
     repl_module = importlib.import_module("nar.cli.repl")
 
     def interrupt(prompt=""):
@@ -151,11 +176,11 @@ def test_repl_ctrl_c_exits_zero(runner, monkeypatch):
     assert repl_module.PROMPT  # sanity: prompt defined
 
 
-def test_repl_ignores_empty_lines_and_echoes_others(runner):
+def test_repl_ignores_empty_lines_and_answers_others(runner, fake_provider):
     result = runner.invoke(main, [], input="\n  \nhello\nexit\n")
     assert result.exit_code == 0
-    assert result.output.count("received: hello") == 1
-    assert "received: \n" not in result.output
+    assert fake_provider.prompts == ["hello"]
+    assert result.stdout.count("Hello there") == 1
 
 
 @pytest.fixture
@@ -213,7 +238,7 @@ def test_invalid_config_traceback_with_debug(runner, workdir, monkeypatch):
     assert "Traceback" in result.stderr
 
 
-def test_interactive_shows_agents_md_notice(runner, workdir, monkeypatch):
+def test_interactive_shows_agents_md_notice(runner, workdir, monkeypatch, fake_provider):
     (workdir / ".git").mkdir()
     (workdir / "AGENTS.md").write_text("rules", encoding="utf-8")
     sub = workdir / "sub"
@@ -224,7 +249,7 @@ def test_interactive_shows_agents_md_notice(runner, workdir, monkeypatch):
     assert f"Using AGENTS.md: {(workdir / 'AGENTS.md').resolve()}" in result.output
 
 
-def test_interactive_without_agents_md_has_no_notice(runner, workdir, monkeypatch):
+def test_interactive_without_agents_md_has_no_notice(runner, workdir, monkeypatch, fake_provider):
     monkeypatch.setattr("nar.context.instructions._is_git_root", lambda directory: False)
     result = runner.invoke(main, [], input="exit\n")
     assert result.exit_code == 0
@@ -270,18 +295,18 @@ def test_missing_api_key_one_line_and_nothing_on_stdout(runner, workdir):
 
 
 def test_answer_ending_in_newline_gets_no_extra_line(runner, fake_provider):
-    fake_provider.deltas = ("one\n",)
+    fake_provider.script = [LLMResponse("one\n")]
     result = runner.invoke(main, ["hello"])
     assert result.stdout == "one\n"
 
 
 def test_retry_notices_go_to_stderr(runner, fake_provider):
-    def stream(messages, **kwargs):
+    def stream():
         fake_provider.on_retry(RetryNotice("openrouter", 2, 4, 1.0, "rate limited"))
         yield TextDelta("ok")
         yield ResponseDone(LLMResponse("ok"))
 
-    fake_provider.stream = stream
+    fake_provider.script = [stream]
     result = runner.invoke(main, ["hello"])
     assert result.exit_code == 0
     assert result.stdout == "ok\n"
@@ -289,12 +314,89 @@ def test_retry_notices_go_to_stderr(runner, fake_provider):
 
 
 def test_answer_cut_by_output_limit_warns_on_stderr(runner, fake_provider):
-    def stream(messages, **kwargs):
-        yield ResponseDone(LLMResponse("", stop_reason=StopReason.MAX_TOKENS))
-
-    fake_provider.stream = stream
-    fake_provider.model = "qwen-test"
+    fake_provider.script = [LLMResponse("", stop_reason=StopReason.MAX_TOKENS)]
     result = runner.invoke(main, ["hello"])
     assert result.exit_code == 0
-    assert result.stdout == "\n"
-    assert "answer was cut off: qwen-test reached the output token limit" in result.stderr
+    assert result.stdout == ""
+    assert "answer was cut off: fake-model reached the output token limit" in result.stderr
+
+
+def test_single_mode_uses_read_file_and_keeps_stdout_for_the_answer(runner, workdir, fake_provider):
+    (workdir / "pyproject.toml").write_text('version = "1.2.3"\n', encoding="utf-8")
+    fake_provider.script = [read_file_call(), LLMResponse("The version is 1.2.3.")]
+    result = runner.invoke(main, ["read pyproject.toml and tell me the version"])
+    assert result.exit_code == 0
+    assert result.stdout == "The version is 1.2.3.\n"
+    assert 'read_file(path="pyproject.toml")' in result.stderr
+    tool_result = fake_provider.requests[1][-1]
+    assert tool_result.role == "tool"
+    assert "1.2.3" in tool_result.content
+
+
+def test_system_prompt_includes_agents_md(runner, workdir, fake_provider, monkeypatch):
+    (workdir / "AGENTS.md").write_text("Always answer in Spanish", encoding="utf-8")
+    seen = {}
+
+    def stream(messages, *, system=None, tools=(), max_tokens=100):
+        seen["system"], seen["tools"] = system, [t["name"] for t in tools]
+        yield ResponseDone(LLMResponse("hola"))
+
+    monkeypatch.setattr(fake_provider, "stream", stream)
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 0
+    assert "Always answer in Spanish" in seen["system"]
+    assert "read_file" in seen["tools"]
+
+
+def test_turn_limit_in_single_mode_exits_one(runner, workdir, fake_provider):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text("max_turns = 1\n", encoding="utf-8")
+    fake_provider.script = [read_file_call()]
+    result = runner.invoke(main, ["read it"])
+    assert result.exit_code == 1
+    assert "stopped after 1 turns" in result.stderr
+    assert len(fake_provider.requests) == 1
+
+
+def test_ctrl_c_in_single_mode_exits_130(runner, fake_provider):
+    fake_provider.script = [KeyboardInterrupt()]
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 130
+    assert "cancelled" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_repl_keeps_the_conversation(runner, fake_provider):
+    fake_provider.script = [LLMResponse("The file says 1.2.3."), LLMResponse("It said 1.2.3.")]
+    result = runner.invoke(main, [], input="read pyproject.toml\nwhat version?\nexit\n")
+    assert result.exit_code == 0
+    second = fake_provider.requests[1]
+    assert [m.content for m in second] == [
+        "read pyproject.toml",
+        "The file says 1.2.3.",
+        "what version?",
+    ]
+
+
+def test_repl_ctrl_c_during_a_request_returns_to_the_prompt(runner, fake_provider):
+    fake_provider.script = [KeyboardInterrupt(), LLMResponse("second answer")]
+    result = runner.invoke(main, [], input="first\nsecond\nexit\n")
+    assert result.exit_code == 0
+    assert "cancelled" in result.stderr
+    assert "second answer" in result.stdout
+    assert [m.content for m in fake_provider.requests[1]] == ["second"]
+
+
+def test_repl_provider_error_keeps_the_session(runner, fake_provider):
+    fake_provider.script = [ProviderError("openrouter failed after 4 attempts: 503", "openrouter")]
+    result = runner.invoke(main, [], input="first\nsecond\nexit\n")
+    assert result.exit_code == 0
+    assert "error: openrouter failed after 4 attempts: 503" in result.stderr
+    assert "Hello there" in result.stdout
+    assert [m.content for m in fake_provider.requests[1]] == ["second"]
+
+
+def test_repl_missing_key_fails_at_startup(runner, workdir):
+    result = runner.invoke(main, [], input="hello\nexit\n")
+    assert result.exit_code == 1
+    assert "OPENROUTER_API_KEY is not set" in result.stderr
