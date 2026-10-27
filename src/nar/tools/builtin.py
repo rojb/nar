@@ -12,6 +12,7 @@ from nar.tools.list_dir import ListDirTool
 from nar.tools.memory import MemoryTool
 from nar.tools.read_file import ReadFileTool
 from nar.tools.registry import ToolRegistry
+from nar.tools.shell import ShellTool
 from nar.tools.todos import TodosTool
 from nar.tools.web_fetch import WebFetchTool
 from nar.tools.web_search import WebSearchTool
@@ -31,6 +32,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
         WebFetchTool(),
         TodosTool(),
         MemoryTool(),
+        ShellTool(),
     ):
         registry.register(tool)
 

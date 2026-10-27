@@ -166,3 +166,31 @@ def test_error_result_never_prints_display():
     renderer, file = make()
     renderer.show_result("x", ToolResult(output="boom", is_error=True, display="[ ] a"))
     assert "[ ] a" not in text(file)
+
+
+def test_error_with_a_summary_prints_the_summary_not_the_output():
+    renderer, file = make()
+    output = "command timed out after 5 seconds\n" + "partial output line\n" * 50
+    renderer.show_result(
+        "shell", ToolResult(output=output, is_error=True, summary="timed out after 5 s")
+    )
+    out = text(file)
+    assert "✗" in out
+    assert "timed out after 5 s" in out
+    assert "partial output line" not in out
+
+
+def test_error_without_a_summary_still_prints_the_whole_message():
+    renderer, file = make()
+    renderer.show_result("x", ToolResult.error("line one\nline two"))
+    out = text(file)
+    assert "line one" in out
+    assert "line two" in out
+
+
+def test_success_still_prints_its_summary_when_errors_use_summaries():
+    renderer, file = make()
+    renderer.show_result("shell", ToolResult.ok("exit code: 3", summary="exit 3 · no output"))
+    out = text(file)
+    assert "✓" in out
+    assert "exit 3 · no output" in out
