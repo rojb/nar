@@ -40,7 +40,8 @@ class ToolRenderer:
 
     def show_result(self, name: str, result: ToolResult) -> None:
         if result.is_error:
-            self._print(f"[red]{self._indicator(False)}[/red] {escape(result.output)}")
+            message = result.summary or result.output
+            self._print(f"[red]{self._indicator(False)}[/red] {escape(message)}")
             return
         summary = result.summary or _describe(result.output)
         self._print(f"[green]{self._indicator(True)}[/green] {escape(summary)}")
