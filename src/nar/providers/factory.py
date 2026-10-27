@@ -16,6 +16,7 @@ from nar.providers.retry import OnRetry
 API_KEY_ENVS = {
     ProviderName.ANTHROPIC: "ANTHROPIC_API_KEY",
     ProviderName.OPENROUTER: "OPENROUTER_API_KEY",
+    ProviderName.DEEPSEEK: "DEEPSEEK_API_KEY",
 }
 
 
@@ -31,9 +32,15 @@ def create_provider(config: NarConfig, on_retry: OnRetry | None = None) -> LLMPr
         from nar.providers.openai_compat import OpenRouterProvider
 
         return OpenRouterProvider(model, _api_key(name), on_retry=on_retry)
-    from nar.providers.openai_compat import OllamaProvider
+    if name is ProviderName.DEEPSEEK:
+        from nar.providers.openai_compat import DeepSeekProvider
 
-    return OllamaProvider(model, on_retry=on_retry)
+        return DeepSeekProvider(model, _api_key(name), on_retry=on_retry)
+    if name is ProviderName.OLLAMA:
+        from nar.providers.openai_compat import OllamaProvider
+
+        return OllamaProvider(model, on_retry=on_retry)
+    raise ProviderError(f"unsupported provider: {name}", str(name))
 
 
 def _api_key(name: ProviderName) -> str:
