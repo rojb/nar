@@ -1,6 +1,6 @@
 # nar
 
-`nar` is a CLI coding agent written in Python. It talks to a model (Anthropic, OpenRouter or a
+`nar` is a CLI coding agent written in Python. It talks to a model (Anthropic, OpenRouter, DeepSeek or a
 local Ollama), lets it call tools (for now `read_file`) in a loop until it has an answer, and keeps
 the conversation in interactive mode. More tools, approvals, compaction and sessions arrive in
 later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
@@ -83,7 +83,7 @@ nested tables (such as `mcp_servers`) are merged key by key:
 
 | Key | Values | Default |
 |---|---|---|
-| `provider` | `anthropic`, `openrouter`, `ollama` | `openrouter` |
+| `provider` | `anthropic`, `openrouter`, `ollama`, `deepseek` | `openrouter` |
 | `model` | any model name of that provider | the provider's default model (see below) |
 | `approval` | `ask`, `auto-edit`, `yolo` | `ask` |
 | `max_turns` | whole number, at least 1: model calls allowed per request | `20` |
@@ -111,6 +111,7 @@ know that model.
 | `anthropic` | `claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
 | `openrouter` | `openrouter/auto` | `OPENROUTER_API_KEY` |
 | `ollama` | `qwen2.5-coder` | a running Ollama server (`ollama serve`) with the model pulled |
+| `deepseek` | `deepseek-flash` | `DEEPSEEK_API_KEY` |
 
 API keys are read only from environment variables, never from the config files, so they cannot
 be committed by accident:
@@ -118,9 +119,17 @@ be committed by accident:
 ```bash
 # Linux / macOS / Git Bash
 export OPENROUTER_API_KEY="sk-or-..."
+export DEEPSEEK_API_KEY="sk-..."
 # Windows PowerShell
 $env:OPENROUTER_API_KEY = "sk-or-..."
+$env:DEEPSEEK_API_KEY = "sk-..."
 ```
+
+DeepSeek is called at `https://api.deepseek.com`. `nar` always turns DeepSeek's thinking mode
+off (`thinking: {"type": "disabled"}`), because its tool loop cannot send `reasoning_content`
+back to the API. The default model `deepseek-flash` comes from the DeepSeek docs read on
+2026-10-27; `deepseek-v4-pro` is also available with `--model`. An empty balance fails with a
+one-line `insufficient balance` error.
 
 Rate limits (429), server errors (5xx), timeouts and connection errors are retried up to 3 times
 with exponential backoff (about 1 s, 2 s, 4 s, or the wait the provider asks for, at most 60 s);
@@ -133,6 +142,7 @@ prints the text plus the internal response (tool calls, stop reason, token usage
 ```bash
 python scripts/run_provider.py --provider ollama --model qwen2.5-coder "Say hello"
 python scripts/run_provider.py --provider ollama --model qwen2.5-coder --with-tool --no-stream "What is the weather in La Paz?"
+python scripts/run_provider.py --provider deepseek --with-tool --no-stream "What is the weather in La Paz?"
 ```
 
 `--with-tool` offers a sample `get_weather` tool; `--no-stream` uses `complete()` instead of
@@ -198,6 +208,7 @@ python scripts/run_tool.py grep '{"pattern": "def load_config", "glob": "*.py"}'
 | `NAR_DEBUG=1` | Print the full traceback in addition to the error message. |
 | `ANTHROPIC_API_KEY` | API key for the `anthropic` provider. |
 | `OPENROUTER_API_KEY` | API key for the `openrouter` provider. |
+| `DEEPSEEK_API_KEY` | API key for the `deepseek` provider. |
 | `OLLAMA_HOST` | Ollama server address (default `http://localhost:11434`; scheme and port are optional). |
 
 ## AGENTS.md
