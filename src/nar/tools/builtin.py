@@ -11,6 +11,8 @@ from nar.tools.grep import GrepTool
 from nar.tools.list_dir import ListDirTool
 from nar.tools.read_file import ReadFileTool
 from nar.tools.registry import ToolRegistry
+from nar.tools.web_fetch import WebFetchTool
+from nar.tools.web_search import WebSearchTool
 from nar.tools.write_file import WriteFileTool
 
 
@@ -23,6 +25,8 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
         ListDirTool(),
         GlobTool(),
         GrepTool(),
+        WebSearchTool(),
+        WebFetchTool(),
     ):
         registry.register(tool)
 
