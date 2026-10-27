@@ -1,4 +1,4 @@
-"""Adapters for OpenAI-compatible chat completion APIs: OpenRouter and Ollama."""
+"""Adapters for OpenAI-compatible chat completion APIs: OpenRouter, Ollama and DeepSeek."""
 
 from __future__ import annotations
 
@@ -41,6 +41,7 @@ class OpenAICompatibleProvider(LLMProvider):
         api_key: str,
         context: ErrorContext,
         default_headers: dict[str, str] | None = None,
+        extra_body: dict[str, Any] | None = None,
         policy: RetryPolicy | None = None,
         on_retry: OnRetry | None = None,
         http_client: httpx2.Client | None = None,
@@ -49,6 +50,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self.policy = policy or RetryPolicy()
         self.on_retry = on_retry
         self.context = context
+        self.extra_body = extra_body  # provider-specific fields merged into every request body
         # The SDK must not retry on its own: RetryPolicy is the only retry layer.
         self.client = openai.OpenAI(
             api_key=api_key,
@@ -75,6 +77,8 @@ class OpenAICompatibleProvider(LLMProvider):
         }
         if tools:
             request["tools"] = to_openai_tools(tools)
+        if self.extra_body:
+            request["extra_body"] = self.extra_body
         return stream_with_retries(
             lambda: self._attempt(request), self.context, self.policy, self.on_retry
         )
@@ -176,6 +180,33 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             api_key=api_key,
             context=ErrorContext(self.name, model, api_key_env=OPENROUTER_API_KEY_ENV),
             default_headers=OPENROUTER_HEADERS,
+            **kwargs,
+        )
+
+
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # no /v1: the docs do not mention it
+DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
+DEEPSEEK_BALANCE_HINT = "deepseek account has insufficient balance; top up at platform.deepseek.com"
+
+
+class DeepSeekProvider(OpenAICompatibleProvider):
+    name = "deepseek"
+
+    def __init__(self, model: str, api_key: str, **kwargs: Any) -> None:
+        super().__init__(
+            model,
+            base_url=DEEPSEEK_BASE_URL,
+            api_key=api_key,
+            context=ErrorContext(
+                self.name,
+                model,
+                api_key_env=DEEPSEEK_API_KEY_ENV,
+                status_hints={402: DEEPSEEK_BALANCE_HINT},
+                unknown_model_pattern="model not exist",
+            ),
+            # Thinking mode (DeepSeek's default) needs reasoning_content echoed back
+            # on tool turns, which the message format cannot carry.
+            extra_body={"thinking": {"type": "disabled"}},
             **kwargs,
         )
 
