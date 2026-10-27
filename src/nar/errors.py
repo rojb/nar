@@ -35,3 +35,7 @@ class ProviderError(NarError):
     def __init__(self, message: str, provider: str, exit_code: int = 1) -> None:
         super().__init__(message, exit_code)
         self.provider = provider
+
+
+class ToolError(NarError):
+    """A tool was defined or registered wrongly, or a tool failed in an expected way."""

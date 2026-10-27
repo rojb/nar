@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from nar.errors import ConfigError, NarError, ProviderError
+from nar.errors import ConfigError, NarError, ProviderError, ToolError
 
 
 def test_nar_error_defaults():
@@ -30,4 +30,11 @@ def test_provider_error_is_nar_error_and_carries_provider():
     err = ProviderError("no key", provider="anthropic")
     assert isinstance(err, NarError)
     assert err.provider == "anthropic"
+    assert err.exit_code == 1
+
+
+def test_tool_error_is_nar_error():
+    err = ToolError("bad tool")
+    assert isinstance(err, NarError)
+    assert str(err) == "bad tool"
     assert err.exit_code == 1

@@ -115,6 +115,17 @@ python scripts/run_provider.py --provider ollama --model qwen2.5-coder --with-to
 `--with-tool` offers a sample `get_weather` tool; `--no-stream` uses `complete()` instead of
 `stream()`.
 
+To run a built-in tool without an LLM, `scripts/run_tool.py` takes the tool name and its
+arguments as a JSON object (default `{}`), prints the call and a result line, then the output the
+model would see. Relative paths resolve against the current folder. Exit code `0` means success,
+`1` means the tool returned an error (unknown tool, bad arguments, file not found), and `2` means
+the arguments are not a valid JSON object. On Windows use Git Bash or PowerShell 7.3+, because
+Windows PowerShell 5.1 strips the inner double quotes:
+
+```bash
+python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
+```
+
 ## Environment variables
 
 | Variable | Effect |
