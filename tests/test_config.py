@@ -143,6 +143,22 @@ def test_model_follows_provider_when_unset(home, project):
     assert "model = qwen2.5-coder  (default)" in loaded.describe(project)
 
 
+def test_deepseek_provider_uses_its_default_model(home, project):
+    write(project / ".nar" / "config.toml", 'provider = "deepseek"\n')
+    loaded = load_config(project)
+    assert loaded.config.provider is ProviderName.DEEPSEEK
+    assert loaded.config.model == DEFAULT_MODELS[ProviderName.DEEPSEEK] == "deepseek-flash"
+    lines = loaded.describe(project)
+    assert "provider = deepseek  (.nar/config.toml)" in lines
+    assert "model = deepseek-flash  (default)" in lines
+
+
+def test_deepseek_command_line_override(home, project):
+    loaded = load_config(project, {"provider": "deepseek", "model": None})
+    assert loaded.config.model == "deepseek-flash"
+    assert "provider = deepseek  (command line)" in loaded.describe(project)
+
+
 def test_explicit_model_is_kept_for_any_provider(home, project):
     write(project / ".nar" / "config.toml", 'provider = "anthropic"\nmodel = "claude-x"\n')
     assert load_config(project).config.model == "claude-x"
@@ -154,7 +170,7 @@ def test_unsupported_provider_lists_allowed(home, project):
         load_config(project)
     message = info.value.message
     assert "provider" in message
-    assert "anthropic, openrouter, ollama" in message
+    assert "anthropic, openrouter, ollama, deepseek" in message
     assert str(path) in message
 
 

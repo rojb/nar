@@ -18,6 +18,7 @@ class ProviderName(StrEnum):
     ANTHROPIC = "anthropic"
     OPENROUTER = "openrouter"
     OLLAMA = "ollama"
+    DEEPSEEK = "deepseek"
 
 
 # Used when no configuration file or flag sets `model`.
@@ -25,6 +26,7 @@ DEFAULT_MODELS = {
     ProviderName.ANTHROPIC: "claude-sonnet-5-5",
     ProviderName.OPENROUTER: "openrouter/auto",
     ProviderName.OLLAMA: "qwen2.5-coder",
+    ProviderName.DEEPSEEK: "deepseek-flash",
 }
 
 

@@ -33,7 +33,7 @@ def runner():
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch, tmp_path):
     monkeypatch.delenv("NAR_DEBUG", raising=False)
-    for env in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_HOST"):
+    for env in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "OLLAMA_HOST"):
         monkeypatch.delenv(env, raising=False)
     monkeypatch.setenv("NAR_HOME", str(tmp_path / "nar-home"))
 
@@ -258,7 +258,7 @@ def test_interactive_without_agents_md_has_no_notice(runner, workdir, monkeypatc
 
 def test_help_lists_provider_and_model_options(runner):
     result = runner.invoke(main, ["--help"])
-    assert "--provider [anthropic|openrouter|ollama]" in result.output
+    assert "--provider [anthropic|openrouter|ollama|deepseek]" in result.output
     assert "--model" in result.output
 
 
@@ -281,8 +281,15 @@ def test_show_config_marks_command_line_source(runner, workdir):
 def test_invalid_provider_option_lists_providers(runner):
     result = runner.invoke(main, ["--provider", "openai", "hello"])
     assert result.exit_code == 2
-    for name in ("anthropic", "openrouter", "ollama"):
+    for name in ("anthropic", "openrouter", "ollama", "deepseek"):
         assert name in result.output
+
+
+def test_deepseek_flag_reaches_the_provider_with_its_default_model(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["--provider", "deepseek", "hello"])
+    assert result.exit_code == 0
+    assert fake_provider.config.provider == "deepseek"
+    assert fake_provider.config.model == "deepseek-flash"
 
 
 def test_missing_api_key_one_line_and_nothing_on_stdout(runner, workdir):
@@ -291,6 +298,15 @@ def test_missing_api_key_one_line_and_nothing_on_stdout(runner, workdir):
     assert result.stdout == ""
     assert result.stderr.strip() == (
         "error: OPENROUTER_API_KEY is not set; export it to use the openrouter provider"
+    )
+
+
+def test_missing_deepseek_key_one_line_and_nothing_on_stdout(runner, workdir):
+    result = runner.invoke(main, ["--provider", "deepseek", "hello"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == (
+        "error: DEEPSEEK_API_KEY is not set; export it to use the deepseek provider"
     )
 
 

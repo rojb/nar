@@ -6,6 +6,7 @@ import pytest
 from nar.errors import ProviderError
 from nar.providers.messages import Message, StopReason, TextDelta, ToolCall
 from nar.providers.openai_compat import (
+    DeepSeekProvider,
     OllamaProvider,
     OpenRouterProvider,
     ollama_host,
@@ -90,6 +91,12 @@ def openrouter(api):
 
 def ollama(api, host="http://localhost:11434"):
     return OllamaProvider("qwen-test", host, policy=POLICY, http_client=client(api))
+
+
+def deepseek(api, model="deepseek-flash", on_retry=None):
+    return DeepSeekProvider(
+        model, "sk-ds-test", policy=POLICY, on_retry=on_retry, http_client=client(api)
+    )
 
 
 def test_streams_text_with_usage():
@@ -224,6 +231,117 @@ def test_ollama_unreachable_retries_then_suggests_starting_it():
     assert len(notices) == 3
     assert "http://localhost:11434" in info.value.message
     assert "ollama serve" in info.value.message
+
+
+def test_deepseek_endpoint_and_request_body():
+    api = FakeAPI((200, sse(chunk({"content": "x"}, finish_reason="stop"))))
+    deepseek(api, "deepseek-v4-pro").complete([Message.user("x")])
+    request = api.requests[0]
+    assert str(request.url) == "https://api.deepseek.com/chat/completions"
+    assert request.headers["authorization"] == "Bearer sk-ds-test"
+    body = api.body()
+    assert body["thinking"] == {"type": "disabled"}
+    assert body["stream_options"] == {"include_usage": True}
+    assert body["model"] == "deepseek-v4-pro"
+
+
+def test_deepseek_streams_text_with_final_usage_chunk():
+    stream = sse(
+        chunk({"role": "assistant", "content": "Hel"}),
+        chunk({"content": "lo"}),
+        chunk({}, finish_reason="stop"),
+        chunk(usage={"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}),
+    )
+    events = list(deepseek(FakeAPI((200, stream))).stream([Message.user("hi")]))
+    assert [e.text for e in events if isinstance(e, TextDelta)] == ["Hel", "lo"]
+    response = events[-1].response
+    assert response.content == "Hello"
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (12, 4)
+
+
+def test_deepseek_split_tool_call():
+    stream = sse(
+        chunk(tool_delta(0, "call_a", "get_weather", "")),
+        chunk(tool_delta(0, arguments='{"city": ')),
+        chunk(tool_delta(0, arguments='"La Paz"}')),
+        chunk({}, finish_reason="tool_calls"),
+    )
+    response = deepseek(FakeAPI((200, stream))).complete(
+        [Message.user("Weather?")], tools=[WEATHER_TOOL]
+    )
+    assert response.tool_calls == (ToolCall("call_a", "get_weather", {"city": "La Paz"}),)
+    assert response.stop_reason is StopReason.TOOL_CALLS
+
+
+def test_deepseek_two_turn_conversation_has_no_reasoning_content():
+    call = ToolCall("call_a", "get_weather", {"city": "La Paz"})
+    messages = [
+        Message.user("Weather?"),
+        Message.assistant("", [call]),
+        Message.tool_result("call_a", "sunny"),
+    ]
+    api = FakeAPI((200, sse(chunk({"content": "Sunny."}, finish_reason="stop"))))
+    response = deepseek(api).complete(messages, tools=[WEATHER_TOOL])
+    assert response.content == "Sunny."
+    sent = api.body()["messages"]
+    assert [m["role"] for m in sent] == ["user", "assistant", "tool"]
+    assert all("reasoning_content" not in m for m in sent)
+
+
+def test_other_providers_do_not_send_thinking():
+    stream = sse(chunk({"content": "x"}, finish_reason="stop"))
+    for build in (openrouter, ollama):
+        api = FakeAPI((200, stream))
+        build(api).complete([Message.user("x")])
+        assert "thinking" not in api.body()
+
+
+def test_deepseek_rejected_key_names_env_var_without_retry():
+    api = FakeAPI((401, {"error": {"message": "Authentication Fails"}}))
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).complete([Message.user("x")])
+    assert "DEEPSEEK_API_KEY" in info.value.message
+    assert len(api.requests) == 1
+
+
+def test_deepseek_insufficient_balance_fails_once():
+    api = FakeAPI((402, {"error": {"message": "Insufficient Balance"}}))
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).complete([Message.user("x")])
+    assert "deepseek" in info.value.message
+    assert "insufficient balance" in info.value.message
+    assert len(api.requests) == 1
+
+
+def test_deepseek_unknown_model_names_model():
+    message = (
+        "The supported API model names are deepseek-flash, deepseek-v4-pro, "
+        "but you passed no-such-model."
+    )
+    api = FakeAPI((400, {"error": {"message": message}}))
+    with pytest.raises(ProviderError) as info:
+        deepseek(api, "no-such-model").complete([Message.user("x")])
+    assert info.value.message == "model 'no-such-model' was not found by deepseek"
+    assert len(api.requests) == 1
+
+
+def test_deepseek_rate_limit_retries_then_answers():
+    notices = []
+    stream = sse(chunk({"content": "ok"}, finish_reason="stop"))
+    api = FakeAPI((429, {"error": {"message": "Rate Limit Reached"}}), (200, stream))
+    response = deepseek(api, on_retry=notices.append).complete([Message.user("x")])
+    assert response.content == "ok"
+    assert len(notices) == 1
+    assert "rate limited" in str(notices[0])
+
+
+def test_deepseek_overloaded_fails_after_four_requests():
+    api = FakeAPI(*[(503, {"error": {"message": "Server Overloaded"}}) for _ in range(4)])
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).complete([Message.user("x")])
+    assert len(api.requests) == 4
+    assert "deepseek" in info.value.message
+    assert "503" in info.value.message
 
 
 @pytest.mark.parametrize(

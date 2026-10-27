@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 
 import anthropic
@@ -66,6 +66,10 @@ class ErrorContext:
     model: str
     api_key_env: str | None = None
     unreachable_hint: str | None = None  # message when the server cannot be reached
+    status_hints: Mapping[int, str] = field(default_factory=dict)  # fixed message per status
+    # Some servers answer an unknown model with 400 or 422 instead of 404: a
+    # case-insensitive fragment of their message that identifies it.
+    unknown_model_pattern: str | None = None
 
 
 def stream_with_retries(
@@ -126,15 +130,26 @@ def translate_error(exc: Exception, context: ErrorContext) -> ProviderError:
         message = context.unreachable_hint or f"cannot reach {provider}: {_one_line(str(exc))}"
     elif isinstance(exc, STATUS_ERRORS):
         status = exc.status_code
-        if status in (401, 403) and context.api_key_env:
+        if status in context.status_hints:
+            message = context.status_hints[status]
+        elif status in (401, 403) and context.api_key_env:
             message = f"{provider} rejected the API key; check {context.api_key_env}"
-        elif status == 404:
+        elif status == 404 or _is_unknown_model(exc, status, context):
             message = f"model '{context.model}' was not found by {provider}"
         else:
             message = f"{provider} rejected the request ({status}): {_api_message(exc)}"
     else:
         message = f"{provider} request failed ({type(exc).__name__}): {_one_line(str(exc))}"
     return ProviderError(message, provider)
+
+
+def _is_unknown_model(exc: Exception, status: int, context: ErrorContext) -> bool:
+    pattern = context.unknown_model_pattern
+    return (
+        pattern is not None
+        and status in (400, 404, 422)
+        and pattern.lower() in _api_message(exc).lower()
+    )
 
 
 def _exhausted(exc: Exception, context: ErrorContext, attempts: int) -> ProviderError:

@@ -4,9 +4,10 @@ Developer tool to check the adapters before the agent loop exists:
 
     python scripts/run_provider.py --provider ollama --model qwen3.5:4b "Say hello"
     python scripts/run_provider.py --with-tool --no-stream "What is the weather in La Paz?"
+    python scripts/run_provider.py --provider deepseek --with-tool --no-stream "What is the weather in La Paz?"
 
 Provider and model come from the nar configuration; the flags override it.
-"""
+"""  # noqa: E501
 
 from __future__ import annotations
 
