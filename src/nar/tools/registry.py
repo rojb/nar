@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -82,4 +83,4 @@ class ToolRegistry:
         output = truncate_output(result.output)
         if output == result.output:
             return result
-        return ToolResult(output=output, is_error=result.is_error, summary=result.summary)
+        return dataclasses.replace(result, output=output)

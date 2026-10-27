@@ -55,6 +55,13 @@ def test_ok_result():
     assert (result.output, result.is_error, result.summary) == ("done", False, "1 line")
 
 
+def test_diff_defaults_to_none_and_ok_accepts_it():
+    assert ToolResult.ok("x").diff is None
+    assert ToolResult.ok("x", diff="d").diff == "d"
+    assert ToolResult.error("x").diff is None
+    assert ToolResult(output="hi", summary="echoed") == ToolResult.ok("hi", summary="echoed")
+
+
 def test_error_result_keeps_bare_message():
     result = ToolResult.error("x")
     assert result.output == "x"

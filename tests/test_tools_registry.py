@@ -169,6 +169,19 @@ def test_long_output_is_truncated():
     assert not result.is_error
 
 
+def test_diff_survives_output_truncation():
+    registry = ToolRegistry()
+    diff = "-a\n+b"
+    registry.register(
+        StubTool(behavior=lambda a: ToolResult.ok("x" * 50_000, summary="big", diff=diff))
+    )
+    result = registry.execute("stub", {"text": "x"})
+    assert len(result.output) <= 30_000
+    assert "[output truncated:" in result.output
+    assert result.diff == diff
+    assert result.summary == "big"
+
+
 def test_long_error_is_truncated_and_stays_an_error():
     registry = ToolRegistry()
     registry.register(StubTool(behavior=lambda a: ToolResult.error("e" * 50_000)))
