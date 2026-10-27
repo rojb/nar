@@ -8,6 +8,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
+from rich.text import Text
 
 from nar.tools.base import ToolResult
 
@@ -43,6 +44,8 @@ class ToolRenderer:
             return
         summary = result.summary or _describe(result.output)
         self._print(f"[green]{self._indicator(True)}[/green] {escape(summary)}")
+        if result.diff:
+            self._print_diff(result.diff)
 
     def _indicator(self, success: bool) -> str:
         unicode_ok = self.console.encoding.lower().startswith("utf")
@@ -52,6 +55,28 @@ class ToolRenderer:
 
     def _print(self, markup: str) -> None:
         self.console.print(markup, soft_wrap=True, highlight=False)
+
+    def _print_diff(self, diff: str) -> None:
+        # Text is never parsed as markup, so brackets in a diff print literally.
+        encoding = self.console.encoding
+        lossy = not encoding.lower().startswith("utf")
+        for line in diff.splitlines():
+            if lossy:
+                line = line.encode(encoding, "replace").decode(encoding)
+            self.console.print(Text(line, style=_diff_style(line)), soft_wrap=True, highlight=False)
+
+
+def _diff_style(line: str) -> str:
+    # File headers are tested before +/- so "--- a/x" is not painted as a removal.
+    if line.startswith(("+++", "---")):
+        return "bold"
+    if line.startswith("@@"):
+        return "cyan"
+    if line.startswith("+"):
+        return "green"
+    if line.startswith("-"):
+        return "red"
+    return ""
 
 
 def _describe(output: str) -> str:
