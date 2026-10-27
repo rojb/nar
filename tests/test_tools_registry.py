@@ -190,14 +190,44 @@ def test_long_error_is_truncated_and_stays_an_error():
     assert len(result.output) <= 30_000
 
 
-def test_default_registry_has_read_file(tmp_path):
+def test_default_registry_has_the_file_tools_in_order(tmp_path):
     registry = create_default_registry(tmp_path)
-    tool = ReadFileTool()
 
-    assert registry.names() == ["read_file"]
-    assert registry.definitions() == [
-        {"name": "read_file", "description": tool.description, "parameters": tool.parameters}
-    ]
+    assert registry.names() == ["read_file", "write_file", "edit_file", "list_dir"]
+    for tool, definition in zip(
+        (registry.get(name) for name in registry.names()), registry.definitions(), strict=True
+    ):
+        assert set(definition) == {"name", "description", "parameters"}
+        assert definition == {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+        }
+
+
+def test_default_registry_required_arguments_and_approval_flags(tmp_path):
+    registry = create_default_registry(tmp_path)
+    required = {d["name"]: d["parameters"].get("required", []) for d in registry.definitions()}
+
+    assert required["read_file"] == ["path"]
+    assert required["write_file"] == ["path", "content"]
+    assert required["edit_file"] == ["path", "old_string", "new_string"]
+    assert required["list_dir"] == []
+    approval = {name: registry.get(name).requires_approval for name in registry.names()}
+    assert approval == {
+        "read_file": False,
+        "write_file": True,
+        "edit_file": True,
+        "list_dir": False,
+    }
+
+
+def test_default_registry_write_file_without_content_is_rejected(tmp_path):
+    result = create_default_registry(tmp_path).execute("write_file", {"path": "a.txt"})
+
+    assert result.is_error
+    assert "content" in result.output
+    assert not (tmp_path / "a.txt").exists()
 
 
 def test_default_registry_reads_relative_to_its_cwd(tmp_path):
