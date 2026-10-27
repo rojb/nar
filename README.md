@@ -1,9 +1,9 @@
 # nar
 
-`nar` is a CLI coding agent written in Python. This version provides the command-line
-skeleton, the configuration system, `AGENTS.md` loading and the LLM providers (Anthropic,
-OpenRouter, Ollama); the tools and the agent loop arrive in later changes (see the specs in
-[nar-specs](https://github.com/rojb/nar-specs)).
+`nar` is a CLI coding agent written in Python. It talks to a model (Anthropic, OpenRouter or a
+local Ollama), lets it call tools (for now `read_file`) in a loop until it has an answer, and keeps
+the conversation in interactive mode. More tools, approvals, compaction and sessions arrive in
+later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
 
 ## Requirements
 
@@ -38,8 +38,8 @@ pip install -e ".[dev]"
 ## Usage
 
 ```bash
-nar                      # interactive mode (placeholder REPL; type "exit" to leave)
-nar "explain this repo"  # single mode: streams the model's answer (no tools yet)
+nar                      # interactive mode: one conversation, type "exit" to leave
+nar "explain this repo"  # single mode: runs the agent on one prompt and exits
 nar --provider ollama --model qwen2.5-coder "hello"   # choose provider/model for this run
 nar --version
 nar --help
@@ -47,7 +47,29 @@ nar --show-config        # print the effective configuration and where each valu
 ```
 
 In interactive mode, empty lines are ignored; `exit`, end-of-input (Ctrl+D, or Ctrl+Z then Enter
-on Windows) and Ctrl+C end the session with exit code 0.
+on Windows) and Ctrl+C at the prompt end the session with exit code 0.
+
+## How the agent works
+
+For each request `nar` sends the conversation and the tool definitions to the model. When the
+model asks for tools, `nar` runs them (in the order requested), sends the results back and asks
+again, until the model answers without tools or `max_turns` model calls were made.
+
+- **Output:** the answer is streamed to standard output; tool calls (`-> read_file(...)`), their
+  results, the "waiting for the model" spinner and warnings go to standard error. So
+  `nar "..." > answer.txt` saves only the answer.
+- **Interactive mode** keeps the whole conversation, so follow-up questions can refer to earlier
+  answers and tool results.
+- **Ctrl+C** while the agent is working cancels that request (it is removed from the
+  conversation) and returns to the prompt; in single mode it exits with code 130.
+- **Turn limit:** when `max_turns` is reached `nar` stops with a message; single mode then exits
+  with code 1.
+- **Provider errors** in interactive mode are shown on one line and the session continues.
+- **Tools that need approval** (none of the current built-in tools) only run with
+  `approval = "yolo"` until the approval prompts of RRG-69 exist; otherwise the model is told it
+  cannot use them.
+- **System prompt:** it tells the model it is `nar`, how to use its tools, the working
+  directory, OS and date, and adds the project's `AGENTS.md` when one is found.
 
 ## Configuration
 
@@ -64,6 +86,7 @@ nested tables (such as `mcp_servers`) are merged key by key:
 | `provider` | `anthropic`, `openrouter`, `ollama` | `openrouter` |
 | `model` | any model name of that provider | the provider's default model (see below) |
 | `approval` | `ask`, `auto-edit`, `yolo` | `ask` |
+| `max_turns` | whole number, at least 1: model calls allowed per request | `20` |
 | `mcp_servers` | table of named server definitions (reserved for RRG-74) | empty |
 
 Example `.nar/config.toml`:
@@ -141,7 +164,8 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 At startup `nar` looks for an `AGENTS.md` in the current directory, then in each parent up to
 and including the git repository root. The first one found is loaded as project instructions
 (at most 64 KB; larger files are truncated with a warning, unreadable or non-UTF-8 files are
-skipped with a warning). Interactive mode shows `Using AGENTS.md: <path>` when one is in use.
+skipped with a warning). Interactive mode shows `Using AGENTS.md: <path>` when one is in use,
+and its content is added to the agent's system prompt.
 
 ## Development
 
