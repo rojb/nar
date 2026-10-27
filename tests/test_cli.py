@@ -258,7 +258,7 @@ def test_interactive_without_agents_md_has_no_notice(runner, workdir, monkeypatc
 
 def test_help_lists_provider_and_model_options(runner):
     result = runner.invoke(main, ["--help"])
-    assert "--provider [anthropic|openrouter|ollama]" in result.output
+    assert "--provider [anthropic|openrouter|ollama|deepseek]" in result.output
     assert "--model" in result.output
 
 
