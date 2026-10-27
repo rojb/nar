@@ -157,9 +157,12 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 | `write_file` | Create a file or replace it entirely; missing folders are created. | yes |
 | `edit_file` | Replace one exact piece of text; shows a diff. | yes |
 | `list_dir` | List one folder (not recursive); hides `.git`, `node_modules`, `.venv`, caches. | no |
+| `glob` | Find files by path pattern (`**/*.py`); at most 200 paths. | no |
+| `grep` | Search file contents with a regular expression; `path:line:text`, at most 100 matches. | no |
 
 `write_file` and `edit_file` are marked as requiring approval, but nothing asks yet: the
-approval prompt arrives with RRG-69, so for now they run as soon as they are called.
+approval prompt arrives with RRG-69. Until then the agent runs them only with
+`approval = "yolo"` (see "How the agent works"); `scripts/run_tool.py` always runs them.
 
 `edit_file` fails unless `old_string` matches exactly once, so include surrounding lines to make
 it unique. Line breaks written as `\n` match both LF and CRLF files; the new text uses the file's
@@ -172,6 +175,19 @@ Create a file in a scratch folder, then edit it (the second command prints a col
 T=$(mktemp -d)
 python scripts/run_tool.py write_file "{\"path\": \"$T/notes.txt\", \"content\": \"timeout = 10\nretries = 3\n\"}"
 python scripts/run_tool.py edit_file "{\"path\": \"$T/notes.txt\", \"old_string\": \"timeout = 10\", \"new_string\": \"timeout = 30\"}"
+```
+
+`glob` and `grep` search the working directory (or `path`) and skip what git ignores
+(`.gitignore` files at any level, `.git/info/exclude` and your global excludes) by asking
+`git ls-files`; outside a git repository, or without git installed, they only skip the folders
+`list_dir` hides. In `glob` patterns `*` and `?` stay inside one folder, `**` spans folders, and
+a pattern without `/` matches file names at any depth (`test_*.py` finds `tests/unit/test_a.py`).
+`grep` uses Python regular expressions, can be limited with `glob` (for example `"*.py"`) and
+`ignore_case`, skips binary files and files over 10 MB, and cuts shown lines to 300 characters.
+
+```bash
+python scripts/run_tool.py glob '{"pattern": "**/*.py", "path": "src"}'
+python scripts/run_tool.py grep '{"pattern": "def load_config", "glob": "*.py"}'
 ```
 
 ## Environment variables
