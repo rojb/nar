@@ -171,6 +171,8 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 | `grep` | Search file contents with a regular expression; `path:line:text`, at most 100 matches. | no |
 | `web_search` | Search the web with DuckDuckGo (no API key); title, URL and snippet, 5 results by default. | no |
 | `web_fetch` | Download an http/https page and return it as Markdown (or text/JSON). | no |
+| `todos` | Keep the agent's task list for the session, shown as a `[ ]`/`[>]`/`[x]` checklist. | no |
+| `memory` | Save, delete and list short facts that are given to the agent in every new session. | no |
 
 `write_file` and `edit_file` are marked as requiring approval, but nothing asks yet: the
 approval prompt arrives with RRG-69. Until then the agent runs them only with
@@ -212,6 +214,24 @@ in the tool activity line.
 ```bash
 python scripts/run_tool.py web_search '{"query": "httpx python documentation", "max_results": 3}'
 python scripts/run_tool.py web_fetch '{"url": "https://www.python-httpx.org/"}'
+```
+
+For multi-step tasks the agent writes a plan with `todos`; each time it updates the list, the
+checklist appears below the tool line (`[ ]` pending, `[>]` in progress, `[x]` done). The list
+lasts for the session only.
+
+`memory` keeps up to 50 short facts (key up to 64 characters, value up to 500) in
+`~/.nar/memory.json` (`$NAR_HOME/memory.json` when set). They are added to the agent's system
+prompt at the start of every session, so a preference you state once ("answer in Spanish") is
+remembered next time. The file is plain JSON: open it to review what was saved, edit it, or
+delete it to forget everything. If it is not valid JSON, `nar` warns at startup, starts without
+memory and never overwrites it.
+
+```bash
+export NAR_HOME=$(mktemp -d)
+python scripts/run_tool.py memory '{"action": "save", "key": "language", "value": "Answer in Spanish"}'
+python scripts/run_tool.py memory '{"action": "list"}'
+python scripts/run_tool.py todos '{"todos": [{"content": "Read the code", "status": "completed"}, {"content": "Write the summary", "status": "in_progress"}]}'
 ```
 
 ## Environment variables
