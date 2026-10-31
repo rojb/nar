@@ -312,3 +312,99 @@ def test_diff_uses_the_resolved_path_outside_the_cwd(tmp_path):
 
     assert result.diff is not None
     assert f"--- a/{outside.resolve().as_posix()}" in result.diff
+
+
+# --- preview and project-edit declaration ------------------------------------------
+
+
+def preview(context: ToolContext, **arguments):
+    return EditFileTool().preview(arguments, context)
+
+
+def test_preview_diff_is_identical_to_the_diff_of_the_real_edit(tmp_path, context):
+    original = b"a = 1\ntimeout = 10\nz = 2\n"
+    path = put(tmp_path / "c.txt", original)
+    arguments = {"old_string": "timeout = 10", "new_string": "timeout = 30"}
+
+    shown = preview(context, path=str(path), **arguments)
+    result = edit(context, path=str(path), **arguments)
+
+    assert shown.error is None
+    assert shown.title == "Edit c.txt (+1 -1)"
+    assert shown.diff == result.diff
+
+
+def test_preview_leaves_the_file_bytes_and_modification_time_alone(tmp_path, context):
+    path = put(tmp_path / "c.txt", b"one\ntwo\n")
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+
+    preview(context, path="c.txt", old_string="two", new_string="2")
+
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize(
+    "setup, arguments",
+    [
+        ("text", {"path": "c.txt", "old_string": "", "new_string": "x"}),
+        ("text", {"path": "c.txt", "old_string": "one", "new_string": "one"}),
+        ("none", {"path": "missing.txt", "old_string": "a", "new_string": "b"}),
+        ("dir", {"path": "folder", "old_string": "a", "new_string": "b"}),
+        ("binary", {"path": "c.txt", "old_string": "a", "new_string": "b"}),
+        ("latin1", {"path": "c.txt", "old_string": "a", "new_string": "b"}),
+        ("text", {"path": "c.txt", "old_string": "zzz", "new_string": "b"}),
+        ("repeated", {"path": "c.txt", "old_string": "x", "new_string": "y"}),
+    ],
+    ids=[
+        "empty-old",
+        "identical",
+        "missing",
+        "directory",
+        "binary",
+        "not-utf8",
+        "not-found",
+        "three-matches",
+    ],
+)
+def test_preview_error_is_the_message_execute_returns(tmp_path, context, setup, arguments):
+    contents = {
+        "text": b"one\ntwo\n",
+        "binary": b"a\x00b",
+        "latin1": "caf\xe9 a".encode("latin-1"),
+        "repeated": b"x x x",
+    }
+    if setup == "dir":
+        (tmp_path / "folder").mkdir()
+    elif setup != "none":
+        put(tmp_path / "c.txt", contents[setup])
+
+    shown = preview(context, **arguments)
+    result = edit(context, **arguments)
+
+    assert result.is_error
+    assert shown.error == result.output
+    assert shown.diff is None
+
+
+def test_preview_of_a_crlf_file_changes_no_line_ending(tmp_path, context):
+    path = put(tmp_path / "c.txt", b"one\r\ntwo\r\nthree\r\n")
+
+    shown = preview(context, path="c.txt", old_string="two", new_string="2\nextra")
+
+    assert shown.error is None
+    assert "+2" in shown.diff
+    assert path.read_bytes() == b"one\r\ntwo\r\nthree\r\n"
+
+
+def test_is_project_edit_is_true_only_inside_the_project(tmp_path, context):
+    tool = EditFileTool()
+    elsewhere = tmp_path.parent / "outside.txt"
+
+    def declared(path: str) -> bool:
+        return tool.is_project_edit({"path": path, "old_string": "a", "new_string": "b"}, context)
+
+    assert declared("src/app.py")
+    assert not declared("../outside.txt")
+    assert not declared(str(elsewhere))
+    assert not declared(".git/config")
+    assert not declared(".nar/config.toml")

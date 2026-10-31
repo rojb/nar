@@ -250,3 +250,75 @@ def test_registry_rejects_a_string_timeout(tmp_path, monkeypatch):
 
     assert result.is_error
     assert "timeout" in result.output
+
+
+# --- preview ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_process(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("a preview must not start a process")
+
+    monkeypatch.setattr("subprocess.Popen", fail)
+
+
+def preview_of(tmp_path, command, tool=None, **extra):
+    tool = tool or ShellTool()
+    return tool.preview({"command": command, **extra}, ToolContext(cwd=tmp_path))
+
+
+@needs_shell
+def test_preview_shows_the_shell_the_default_timeout_and_the_command(tmp_path, no_process):
+    shown = preview_of(tmp_path, "git status")
+
+    assert shown.title == f"Run in {SHELL.name} (timeout 120 s)"
+    assert shown.detail == "git status"
+    assert shown.error is None
+
+
+@needs_shell
+def test_preview_shows_an_explicit_timeout(tmp_path, no_process):
+    assert "(timeout 30 s)" in preview_of(tmp_path, "git status", timeout=30).title
+
+
+@needs_shell
+def test_preview_keeps_the_command_text_unmodified(tmp_path, no_process):
+    command = "echo '[red]  ñandú'  &&   ls"
+
+    assert preview_of(tmp_path, command).detail == command
+
+
+def test_preview_of_a_blocked_command_has_the_same_error_as_execute(tmp_path, no_process):
+    tool = ShellTool()
+    shown = preview_of(tmp_path, "rm -rf /", tool)
+    result = tool.execute({"command": "rm -rf /"}, ToolContext(cwd=tmp_path))
+
+    assert shown.error == result.output
+    assert "safety list" in shown.error
+
+
+def test_preview_of_an_empty_command_is_an_error(tmp_path, no_process):
+    assert preview_of(tmp_path, "   ").error == "command must not be empty"
+
+
+def test_preview_without_a_shell_is_an_error(tmp_path, no_process, monkeypatch):
+    monkeypatch.setattr("nar.tools.shell.find_shell", lambda: None)
+    tool = ShellTool()
+
+    shown = preview_of(tmp_path, "git status", tool)
+
+    assert shown.error.startswith("no shell found")
+
+
+@needs_shell
+def test_preview_with_a_missing_working_directory_is_an_error(tmp_path, no_process):
+    missing = tmp_path / "gone"
+
+    shown = preview_of(missing, "git status")
+
+    assert shown.error == f"working directory not found: {missing}"
+
+
+def test_shell_is_never_a_project_edit(tmp_path):
+    assert ShellTool().is_project_edit({"command": "echo hi"}, ToolContext(cwd=tmp_path)) is False
