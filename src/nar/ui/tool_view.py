@@ -46,9 +46,17 @@ class ToolRenderer:
         summary = result.summary or _describe(result.output)
         self._print(f"[green]{self._indicator(True)}[/green] {escape(summary)}")
         if result.diff:
-            self._print_lines(result.diff, _diff_style)
+            self.show_diff(result.diff)
         if result.display:
             self._print_lines(result.display, _display_style)
+
+    def show_diff(self, diff: str) -> None:
+        """Print a unified diff with the diff colors; the text is never read as markup."""
+        self._print_lines(diff, _diff_style)
+
+    def show_detail(self, block: str, style: str = "dim") -> None:
+        """Print supporting text (a command, file content), dimmed by default, as literal text."""
+        self._print_lines(block, lambda line: style)
 
     def _indicator(self, success: bool) -> str:
         unicode_ok = self.console.encoding.lower().startswith("utf")

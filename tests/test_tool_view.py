@@ -194,3 +194,24 @@ def test_success_still_prints_its_summary_when_errors_use_summaries():
     out = text(file)
     assert "✓" in out
     assert "exit 3 · no output" in out
+
+
+def test_show_diff_colors_the_lines_and_prints_brackets_literally():
+    renderer, file = make_color()
+
+    renderer.show_diff("-old [red]\n+new [red]")
+    out = file.getvalue()
+
+    assert "\x1b[31m" in line_with(out, "-old")
+    assert "\x1b[32m" in line_with(out, "+new")
+    assert "[red]" in line_with(out, "-old")
+
+
+def test_show_detail_prints_dim_literal_text():
+    renderer, file = make_color()
+
+    renderer.show_detail("echo '[bold]hi[/bold]'")
+
+    line = line_with(file.getvalue(), "echo")
+    assert "\x1b[2m" in line
+    assert "[bold]hi[/bold]" in line
