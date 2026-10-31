@@ -1,9 +1,15 @@
+import concurrent.futures
 import importlib
+import subprocess
+import sys
+import threading
+import time
 
 import click
 import pytest
 from click.testing import CliRunner
 
+from mcp_support import FIXTURE, read_pid, wait_until_gone
 from nar import __version__
 from nar.cli import main
 from nar.errors import NarError, ProviderError
@@ -677,3 +683,215 @@ def test_ctrl_c_at_the_question_exits_130_in_single_mode(runner, workdir, fake_p
     assert result.exit_code == 130
     assert "cancelled" in result.stderr
     assert not (workdir / "a.txt").exists()
+
+
+# --- MCP servers -------------------------------------------------------------------------------
+
+
+def mcp_config(workdir, *blocks):
+    (workdir / ".nar").mkdir(exist_ok=True)
+    (workdir / ".nar" / "config.toml").write_text("\n".join(blocks), encoding="utf-8")
+
+
+def demo_server(workdir, name="demo", *flags, with_pid=True):
+    """A config block for the demo MCP server; TOML literal strings keep Windows paths intact."""
+    args = [str(FIXTURE), *flags]
+    if with_pid:
+        args += ["--pid-file", str(workdir / f"{name}.pid")]
+    quoted = ", ".join(f"'{arg}'" for arg in args)
+    return f"[mcp_servers.{name}]\ncommand = '{sys.executable}'\nargs = [{quoted}]\n"
+
+
+def echo_script(fake_provider, tool, **arguments):
+    """The model calls an MCP tool, then repeats what the tool returned."""
+
+    def answer():
+        text = "tool said: " + fake_provider.requests[-1][-1].content
+        yield TextDelta(text)
+        yield ResponseDone(LLMResponse(text))
+
+    return [tool_call(tool, **arguments), answer]
+
+
+def server_pid(workdir, name="demo"):
+    return read_pid(workdir / f"{name}.pid")
+
+
+def test_single_mode_calls_an_mcp_tool_and_stops_the_server(runner, workdir, fake_provider):
+    mcp_config(workdir, demo_server(workdir))
+    fake_provider.script = echo_script(fake_provider, "mcp__demo__echo", text="hi there")
+
+    result = runner.invoke(main, ["--approval", "yolo", "echo something"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "tool said: hi there\n"
+    assert "connecting MCP servers: demo ..." in result.stderr
+    assert "mcp__demo__echo" in result.stderr
+    assert wait_until_gone(server_pid(workdir), timeout=10)
+
+
+def test_single_mode_asks_before_an_mcp_call_at_the_default_level(
+    runner, workdir, fake_provider, terminal
+):
+    mcp_config(workdir, demo_server(workdir))
+    terminal("y")
+    fake_provider.script = echo_script(fake_provider, "mcp__demo__echo", text="approved")
+
+    result = runner.invoke(main, ["echo something"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "tool said: approved\n"
+    assert "Approval needed: MCP demo: echo" in result.stderr
+    assert "Allow mcp__demo__echo?" in result.stderr
+
+
+def test_without_mcp_servers_nothing_is_printed_started_or_imported(
+    runner, workdir, fake_provider, monkeypatch
+):
+    # A None entry makes any import of these modules fail, so the run proves they stay unused.
+    for module in ("nar.mcp.connection", "nar.mcp.runtime"):
+        monkeypatch.setitem(sys.modules, module, None)
+
+    result = runner.invoke(main, ["hello"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "Hello there\n"
+    assert "MCP" not in result.stderr
+
+
+def test_only_disabled_servers_are_not_started(runner, workdir, fake_provider, monkeypatch):
+    mcp_config(workdir, "[mcp_servers.off]\ncommand = 'x'\nenabled = false\n")
+    monkeypatch.setitem(sys.modules, "nar.mcp.connection", None)
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 0
+    assert "MCP" not in result.stderr
+
+
+def test_the_cli_does_not_import_the_sdk():
+    code = (
+        "import nar.cli.main, sys; assert 'mcp' not in sys.modules and 'httpx2' not in sys.modules"
+    )
+    assert subprocess.run([sys.executable, "-c", code]).returncode == 0
+
+
+def test_a_failing_server_gives_one_warning_and_built_in_tools_still_work(
+    runner, workdir, fake_provider
+):
+    (workdir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    mcp_config(workdir, "[mcp_servers.x]\ncommand = 'does-not-exist-nar'\n")
+    fake_provider.script = [read_file_call(), LLMResponse("It is a project.")]
+
+    result = runner.invoke(main, ["--approval", "yolo", "read it"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "It is a project.\n"
+    warnings = [line for line in result.stderr.splitlines() if "is not available" in line]
+    assert warnings == [
+        "warning: MCP server 'x' is not available: command 'does-not-exist-nar' not found"
+    ]
+
+
+def test_interactive_mcp_command_prints_status_without_calling_the_model(
+    runner, workdir, fake_provider
+):
+    mcp_config(workdir, "[mcp_servers.off]\ncommand = 'x'\nenabled = false\n")
+
+    result = runner.invoke(main, [], input="/mcp\nexit\n")
+
+    assert result.exit_code == 0
+    assert "off  (stdio)  disabled" in result.stdout
+    assert fake_provider.requests == []
+
+
+def test_interactive_mcp_command_without_servers_explains_where_to_add_them(
+    runner, workdir, fake_provider
+):
+    result = runner.invoke(main, [], input="/mcp\nexit\n")
+    assert "No MCP servers are configured" in result.stdout
+    assert fake_provider.requests == []
+
+
+def test_interactive_unknown_command_prints_an_error_and_continues(runner, workdir, fake_provider):
+    result = runner.invoke(main, [], input="/foo\nhello\nexit\n")
+
+    assert result.exit_code == 0
+    assert "error: /foo is not a command; available: /mcp" in result.stderr
+    assert fake_provider.prompts == ["hello"]
+
+
+def test_interactive_path_reaches_the_model(runner, workdir, fake_provider):
+    result = runner.invoke(main, [], input="/etc/hosts x\nexit\n")
+    assert result.exit_code == 0
+    assert fake_provider.prompts == ["/etc/hosts x"]
+
+
+def test_single_mode_does_not_treat_a_slash_prompt_as_a_command(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["/mcp"])
+    assert result.exit_code == 0
+    assert fake_provider.prompts == ["/mcp"]
+
+
+@pytest.fixture
+def interrupt_mcp_call(monkeypatch):
+    """Press Ctrl+C once, while the main thread waits for the first MCP call to finish."""
+    from nar.mcp.manager import McpManager
+
+    state = {"waiting": False, "fired": False}
+    main_thread = threading.current_thread()
+    real_call = McpManager.call
+    real_result = concurrent.futures.Future.result
+
+    def call(self, *args, **kwargs):
+        state["waiting"] = True
+        return real_call(self, *args, **kwargs)
+
+    def result(self, timeout=None):
+        if state["waiting"] and not state["fired"] and threading.current_thread() is main_thread:
+            state["fired"] = True
+            time.sleep(0.5)  # let the call reach the server
+            raise KeyboardInterrupt
+        return real_result(self, timeout)
+
+    monkeypatch.setattr(McpManager, "call", call)
+    monkeypatch.setattr(concurrent.futures.Future, "result", result)
+    return state
+
+
+def test_ctrl_c_during_an_mcp_call_cancels_the_request_and_keeps_the_server(
+    runner, workdir, fake_provider, interrupt_mcp_call
+):
+    mcp_config(workdir, demo_server(workdir))
+    slow = tool_call("mcp__demo__slow", seconds=30)
+    fake_provider.script = [slow, *echo_script(fake_provider, "mcp__demo__echo", text="still up")]
+
+    started = time.monotonic()
+    result = runner.invoke(main, ["--approval", "yolo"], input="wait\nagain\nexit\n")
+
+    assert time.monotonic() - started < 25
+    assert result.exit_code == 0
+    assert "cancelled" in result.stderr
+    assert "tool said: still up" in result.stdout
+    assert wait_until_gone(server_pid(workdir), timeout=10)
+
+
+def test_ctrl_c_during_an_mcp_call_in_single_mode_exits_130_and_stops_the_server(
+    runner, workdir, fake_provider, interrupt_mcp_call
+):
+    mcp_config(workdir, demo_server(workdir))
+    fake_provider.script = [tool_call("mcp__demo__slow", seconds=30)]
+
+    result = runner.invoke(main, ["--approval", "yolo", "wait"])
+
+    assert result.exit_code == 130
+    assert "cancelled" in result.stderr
+    assert wait_until_gone(server_pid(workdir), timeout=10)
+
+
+def test_a_missing_provider_key_fails_before_any_server_starts(runner, workdir):
+    mcp_config(workdir, demo_server(workdir))
+
+    result = runner.invoke(main, ["hello"])
+
+    assert result.exit_code == 1
+    assert "OPENROUTER_API_KEY is not set" in result.stderr
+    assert not (workdir / "demo.pid").exists()

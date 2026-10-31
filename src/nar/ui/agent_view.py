@@ -69,6 +69,10 @@ class AgentView:
     def warn(self, message: str) -> None:
         self.err.print(f"[yellow]{escape(message)}[/yellow]", highlight=False, soft_wrap=True)
 
+    def note(self, message: str) -> None:
+        """A dim progress line on standard error, printed literally."""
+        self.err.print(f"[dim]{escape(message)}[/dim]", highlight=False, soft_wrap=True)
+
     def error(self, message: str) -> None:
         self.finish()
         self.err.print(f"[red]error: {escape(message)}[/red]", highlight=False, soft_wrap=True)

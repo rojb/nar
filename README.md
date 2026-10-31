@@ -48,7 +48,9 @@ nar --show-config        # print the effective configuration and where each valu
 ```
 
 In interactive mode, empty lines are ignored; `exit`, end-of-input (Ctrl+D, or Ctrl+Z then Enter
-on Windows) and Ctrl+C at the prompt end the session with exit code 0.
+on Windows) and Ctrl+C at the prompt end the session with exit code 0. A line such as `/mcp` is a
+command and is not sent to the model (see "MCP servers"); a path such as `/etc/hosts` is not a
+command and is sent as a request.
 
 ## How the agent works
 
@@ -66,7 +68,7 @@ again, until the model answers without tools or `max_turns` model calls were mad
 - **Turn limit:** when `max_turns` is reached `nar` stops with a message; single mode then exits
   with code 1.
 - **Provider errors** in interactive mode are shown on one line and the session continues.
-- **Tools that need approval** (`write_file`, `edit_file` and `shell`) ask you first, unless the
+- **Tools that need approval** (`write_file`, `edit_file`, `shell` and every MCP tool) ask you first, unless the
   approval level says otherwise (see "Approvals"). If you say no, or `nar` cannot ask, the model
   is told and can try something else or answer.
 - **System prompt:** it tells the model it is `nar`, how to use its tools, the working
@@ -88,7 +90,7 @@ nested tables (such as `mcp_servers`) are merged key by key:
 | `model` | any model name of that provider | the provider's default model (see below) |
 | `approval` | `ask`, `auto-edit`, `yolo` | `ask` |
 | `max_turns` | whole number, at least 1: model calls allowed per request | `20` |
-| `mcp_servers` | table of named server definitions (reserved for RRG-74) | empty |
+| `mcp_servers` | table of named MCP server definitions, `[mcp_servers.<name>]` (see "MCP servers") | empty |
 
 Example `.nar/config.toml`:
 
@@ -156,6 +158,7 @@ What you see for each built-in tool:
 | `edit_file` | the diff, with the number of added and removed lines |
 | `write_file` | `Create <path> (N lines)` with the beginning of the content, or `Overwrite <path>` with a diff against the current file; a path outside the project is shown in full |
 | `shell` | the shell, the timeout and the command text exactly as it will run |
+| an MCP tool | `MCP <server>: <tool>` and the arguments as indented JSON |
 | any other tool | its name and arguments |
 
 Long previews are cut (60 lines of text, 100 lines of diff) with a note and
@@ -326,11 +329,160 @@ python scripts/run_tool.py shell '{"command": "python --version"}'
 python scripts/run_tool.py shell '{"command": "python --version", "timeout": 30}'
 ```
 
+## MCP servers
+
+`nar` can connect to external [Model Context Protocol](https://modelcontextprotocol.io) (MCP)
+servers, such as Linear, and offer their tools to the model next to the built-in ones. Servers
+are defined in `~/.nar/config.toml` or `.nar/config.toml`, one table per server:
+
+```toml
+# a program nar starts and talks to over its standard input and output (stdio)
+[mcp_servers.files]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+# a server that is already running somewhere (streamable HTTP)
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+headers = { Authorization = "Bearer ${LINEAR_API_KEY}" }
+```
+
+| Key | Meaning | Default |
+|---|---|---|
+| `command` | stdio: program to start (`npx` works on Windows too) | none |
+| `args` | stdio: its arguments, a list of strings | `[]` |
+| `env` | stdio: extra environment variables for the program, a table of strings | `{}` |
+| `url` | HTTP: the server's streamable HTTP endpoint | none |
+| `headers` | HTTP: headers sent with every request, a table of strings | `{}` |
+| `enabled` | `false` skips the server (it is still listed by `/mcp`) | `true` |
+| `enabled_tools` | list of the server's own tool names; only these are offered to the model | all tools |
+| `startup_timeout` | seconds to connect and list the tools | `30` |
+| `tool_timeout` | seconds one tool call may take | `60` |
+
+Set exactly one of `command` or `url`. The server name (the part after `mcp_servers.`) uses
+letters, digits, `_` and `-` (at most 32 characters); `my-srv` and `my_srv` cannot both be used.
+Entries of the user file and the project file are merged key by key, so a project can set
+`enabled = false` for a server defined in the user file.
+
+**Secrets.** Never write a token into a configuration file. In `command`, `args`, `env`, `url` and
+`headers`, `${NAME}` is replaced by the value of the environment variable `NAME` when `nar`
+starts the server. If the variable is unset or empty, that server is skipped with a warning that
+names the variable, and no request is sent with an empty credential. `nar --show-config` prints
+`${NAME}` as written and shows any other value of `env` or `headers` as `********`. A program
+started over stdio receives only a minimal environment (`PATH` and similar) plus its `env`, not
+the rest of your shell; to pass a variable on, write `env = { KEY = "${KEY}" }`.
+
+**What the model sees.** Each tool of each connected server is offered as
+`mcp__<server>__<tool>`, for example `mcp__linear__list_issues`. Characters other than letters,
+digits and `_` become `_`, names are at most 64 characters, and the server is always called with
+the tool's original name. The server's description and parameter schema are passed on as they
+are (a description is cut at 2,000 characters), and arguments are checked against the schema before
+anything is sent. Text results are returned as text; an image, audio clip or binary resource is
+replaced by a one-line description such as `[image image/png, 40000 bytes, not shown]`. A
+result is cut at the same 30,000 characters as every other tool.
+
+**Approval.** Every MCP tool asks first at `ask` and `auto-edit` and runs unasked only at `yolo`.
+The question shows `MCP <server>: <tool>` and the arguments. `a` ("always allow this tool this
+session") applies to that one tool. A server's own hints, such as "read only", are not trusted and
+do not skip the question. To keep the list short, set `enabled_tools`.
+
+**Checking the servers.** In interactive mode `/mcp` prints, for each server, its name,
+transport (`stdio` or `http`), status (`connected`, `failed` or `disabled`) and its tools; for a
+failed server it prints the reason and, for a stdio server, the log file. `/mcp <name>` prints one
+server. The command does not call the model or contact the servers, and never prints headers or
+environment values.
+
+```text
+nar> /mcp
+linear  (http)  connected
+  3 tools
+    mcp__linear__get_issue
+    mcp__linear__list_issues
+    mcp__linear__save_issue
+jira  (http)  failed
+  authentication rejected (HTTP 401)
+```
+
+**When something is wrong.** A server that cannot be used (unknown command, rejected token,
+unreachable URL, timeout, not an MCP server) gives one warning at startup and is skipped; `nar`
+and the other servers keep working. What a stdio server writes to its standard error is kept in
+`~/.nar/mcp-logs/<server>.log` (under `NAR_HOME` if set), not in the terminal. The first start of
+`npx` can take a while because it downloads the package: raise `startup_timeout`. Behind a
+company proxy that replaces TLS certificates, set `SSL_CERT_FILE` to your CA bundle. If a server
+dies during a session its tools answer with "no longer connected" and `/mcp` shows it as failed;
+`nar` does not reconnect, so start it again by restarting `nar`. Ctrl+C cancels a running MCP
+call within a second and keeps the server connected. When `nar` ends, every server it started is
+stopped.
+
+### Demo: Linear
+
+Linear's official MCP server lives at `https://mcp.linear.app/mcp`. This lets `nar` list the
+issues of a Linear project.
+
+*What you provide:* a Linear personal API key (Linear > Settings > Account > Security & access;
+a key limited to read access is enough for the demo) in the environment variable
+`LINEAR_API_KEY`. Nothing else is required: no Node.js and no browser.
+
+```bash
+# Git Bash / Linux / macOS (this terminal only)
+export LINEAR_API_KEY=lin_api_xxxxxxxx
+```
+
+```powershell
+# Windows PowerShell (this window only)
+$env:LINEAR_API_KEY = "lin_api_xxxxxxxx"
+# kept for new terminals: setx LINEAR_API_KEY "lin_api_xxxxxxxx", then open a new terminal
+```
+
+Add this to `.nar/config.toml` of the project where you run `nar`:
+
+```toml
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+headers = { Authorization = "Bearer ${LINEAR_API_KEY}" }
+```
+
+Check the configuration without starting anything (`nar --show-config` shows
+`Bearer ${LINEAR_API_KEY}`, never the key), then start `nar`:
+
+```bash
+nar --show-config
+nar
+```
+
+`nar` prints `connecting MCP servers: linear ...`. Type `/mcp`: `linear` should be `http` and
+`connected`, with its tools. Then ask for something Linear knows:
+
+```text
+nar> list the issues of the Linear project nar in team RRG
+```
+
+`nar` shows `MCP linear: list_issues` with the arguments and waits for `y`; the answer is built
+from the real issues. Tip: Linear documents a read-only variant of the endpoint,
+`https://mcp.linear.app/mcp/readonly`, which exposes no tool that changes anything; use it as
+`url` if you only want to read.
+
+*If Linear rejects the key:* `/mcp` shows `authentication rejected (HTTP 401)`. Linear documents
+that its server accepts a personal API key as a Bearer token, but if your workspace does not,
+use the fallback, which logs in through your browser once. It needs Node.js 18 or newer
+(for `npx`) and a browser:
+
+```toml
+[mcp_servers.linear]
+command = "npx"
+args = ["-y", "mcp-remote", "https://mcp.linear.app/mcp"]
+startup_timeout = 120
+```
+
+The first start opens a browser tab to log in to Linear (the long `startup_timeout` leaves time
+for that); `mcp-remote` remembers the login afterwards.
+
 ## Environment variables
 
 | Variable | Effect |
 |---|---|
 | `NAR_HOME` | Use this folder instead of `~/.nar` (handy for trying things without touching your real home). |
+| `LINEAR_API_KEY` | Only for the Linear demo: referenced from `[mcp_servers.linear]` as `${LINEAR_API_KEY}`; `nar` itself does not read it. |
 | `NAR_DEBUG=1` | Print the full traceback in addition to the error message. |
 | `ANTHROPIC_API_KEY` | API key for the `anthropic` provider. |
 | `OPENROUTER_API_KEY` | API key for the `openrouter` provider. |

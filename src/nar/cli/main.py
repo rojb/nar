@@ -19,12 +19,13 @@ from nar.errors import NarError
 def run_single(prompt: str, config: NarConfig, instructions: ProjectInstructions | None) -> int:
     """Run the agent on one prompt; returns the exit code."""
     # Imported here: the provider SDKs are slow to import and other commands do not need them.
-    from nar.cli.runner import Outcome, create_agent, run_request
+    from nar.cli.runner import Outcome, connect_mcp, create_agent, run_request
     from nar.ui.agent_view import AgentView
 
     view = AgentView()
     agent = create_agent(config, Path.cwd(), instructions, view)
-    return 1 if run_request(agent, view, prompt) is Outcome.TURN_LIMIT else 0
+    with connect_mcp(config, agent, view):
+        return 1 if run_request(agent, view, prompt) is Outcome.TURN_LIMIT else 0
 
 
 @click.command(

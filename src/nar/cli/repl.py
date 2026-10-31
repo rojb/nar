@@ -20,28 +20,33 @@ def run(config: NarConfig, instructions: ProjectInstructions | None = None) -> N
     Ctrl+C or a provider error during a request cancels only that request.
     """
     # Imported here: the provider SDKs are slow to import.
-    from nar.cli.runner import create_agent, run_request
+    from nar.cli import slash
+    from nar.cli.runner import connect_mcp, create_agent, run_request
     from nar.ui.agent_view import AgentView
 
     if instructions is not None:
         click.echo(f"Using AGENTS.md: {instructions.path}")
     view = AgentView()
     agent = create_agent(config, Path.cwd(), instructions, view)  # a missing key stops here
-    click.echo(f"nar · {agent.provider.name} · {agent.provider.model}. Type 'exit' to leave.")
-    while True:
-        try:
-            line = input(PROMPT)
-        except (EOFError, KeyboardInterrupt):
-            click.echo()
-            return
-        line = line.strip()
-        if not line:
-            continue
-        if line in EXIT_WORDS:
-            return
-        try:
-            run_request(agent, view, line)
-        except KeyboardInterrupt:
-            view.cancelled()
-        except ProviderError as exc:
-            view.error(exc.message)
+    with connect_mcp(config, agent, view) as mcp:
+        click.echo(f"nar · {agent.provider.name} · {agent.provider.model}. Type 'exit' to leave.")
+        commands = slash.SlashContext(mcp, view.out, view.err)
+        while True:
+            try:
+                line = input(PROMPT)
+            except (EOFError, KeyboardInterrupt):
+                click.echo()
+                return
+            line = line.strip()
+            if not line:
+                continue
+            if line in EXIT_WORDS:
+                return
+            if slash.dispatch(line, commands):
+                continue
+            try:
+                run_request(agent, view, line)
+            except KeyboardInterrupt:
+                view.cancelled()
+            except ProviderError as exc:
+                view.error(exc.message)
