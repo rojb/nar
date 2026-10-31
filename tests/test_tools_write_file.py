@@ -144,3 +144,93 @@ def test_os_refusal_names_path_and_reason(tmp_path, context, monkeypatch):
     assert result.is_error
     assert str((tmp_path / "locked.txt").resolve()) in result.output
     assert "Permission denied" in result.output
+
+
+# --- preview and project-edit declaration ------------------------------------------
+
+
+def preview(context: ToolContext, **arguments):
+    return WriteFileTool().preview(arguments, context)
+
+
+def test_preview_of_a_new_file_in_a_missing_folder_creates_nothing(tmp_path, context):
+    shown = preview(context, path="docs/guides/intro.md", content="# Intro\nhello\n")
+
+    assert shown.title == "Create docs/guides/intro.md (2 lines)"
+    assert shown.detail == "# Intro\nhello\n"
+    assert shown.diff is None
+    assert shown.error is None
+    assert not (tmp_path / "docs").exists()
+
+
+def test_preview_of_an_overwrite_shows_a_diff_and_leaves_the_file_alone(tmp_path, context):
+    path = tmp_path / "a.txt"
+    path.write_bytes(b"one\ntwo\n")
+    before = path.stat().st_mtime_ns
+
+    shown = preview(context, path="a.txt", content="one\n2\n")
+
+    assert shown.title == "Overwrite a.txt"
+    assert "-two" in shown.diff
+    assert "+2" in shown.diff
+    assert path.read_bytes() == b"one\ntwo\n"
+    assert path.stat().st_mtime_ns == before
+
+
+def test_preview_of_identical_content_says_there_are_no_changes(tmp_path, context):
+    (tmp_path / "a.txt").write_bytes(b"same\n")
+
+    shown = preview(context, path="a.txt", content="same\n")
+
+    assert shown.title == "Overwrite a.txt (no changes)"
+    assert not shown.diff
+
+
+def test_preview_over_a_binary_file_explains_why_there_is_no_diff(tmp_path, context):
+    (tmp_path / "a.bin").write_bytes(b"\x00\x01\x02")
+
+    shown = preview(context, path="a.bin", content="text\n")
+
+    assert shown.title == "Overwrite a.bin"
+    assert shown.diff is None
+    assert "cannot be shown as text" in shown.detail
+    assert "1 lines, 5 bytes" in shown.detail
+    assert shown.detail.endswith("text\n")
+
+
+def test_preview_errors_are_the_messages_execute_returns(tmp_path, context):
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "file.txt").write_text("x", encoding="utf-8")
+    cases = [
+        {"path": "folder", "content": "x"},
+        {"path": "file.txt/child.txt", "content": "x"},
+        {"path": "new.txt", "content": "bad \ud800 surrogate"},
+    ]
+
+    for arguments in cases:
+        shown = preview(context, **arguments)
+        result = write(context, **arguments)
+        assert result.is_error
+        assert shown.error == result.output
+    assert shown.error == "content cannot be encoded as UTF-8"
+
+
+def test_preview_shows_a_path_outside_the_project_as_absolute(tmp_path, context):
+    outside = tmp_path.parent / "outside_preview_target.txt"
+
+    shown = preview(context, path=str(outside), content="x\n")
+
+    assert shown.title.startswith(f"Create {outside.as_posix()}")
+
+
+def test_is_project_edit_is_true_only_inside_the_project(tmp_path, context):
+    tool = WriteFileTool()
+
+    def declared(path: str) -> bool:
+        return tool.is_project_edit({"path": path, "content": "x"}, context)
+
+    assert declared("src/new.py")
+    assert not declared("../x.txt")
+    assert not declared(str(tmp_path.parent / "x.txt"))
+    assert not declared(".nar/config.toml")
+    assert not declared(".git/hooks/x")

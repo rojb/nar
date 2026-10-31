@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nar.tools.base import Tool, ToolContext, ToolResult
+from nar.tools.base import Tool, ToolContext, ToolPreview, ToolResult
 from nar.tools.shell_blocklist import find_blocked
 from nar.tools.shell_process import (
     RunResult,
@@ -50,25 +50,38 @@ class ShellTool(Tool):
     def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         command: str = arguments["command"]
         timeout: int = arguments.get("timeout", DEFAULT_TIMEOUT)
-        if not command.strip():
-            return ToolResult.error("command must not be empty")
-        reason = find_blocked(command)
-        if reason:
-            return ToolResult.error(
-                f"command blocked by nar's safety list ({reason}). Do not retry it or work "
-                "around it; tell the user what you wanted to do so they can run it themselves."
-            )
-        if self.shell is None:
-            return ToolResult.error(
-                "no shell found: install PowerShell (Windows) or bash/sh (Linux, macOS)"
-            )
-        if not context.cwd.is_dir():
-            return ToolResult.error(f"working directory not found: {context.cwd}")
+        refusal = self._refusal(command, context)
+        if refusal:
+            return ToolResult.error(refusal)
         try:
             run = run_command(build_argv(self.shell, command), context.cwd, timeout)
         except OSError as exc:
             return ToolResult.error(f"cannot start {self.shell.name}: {exc.strerror or exc}")
         return _result(run, timeout)
+
+    def preview(self, arguments: dict[str, Any], context: ToolContext) -> ToolPreview:
+        command: str = arguments["command"]
+        timeout: int = arguments.get("timeout", DEFAULT_TIMEOUT)
+        refusal = self._refusal(command, context)
+        if refusal or self.shell is None:
+            return ToolPreview(title="Run command", error=refusal)
+        return ToolPreview(title=f"Run in {self.shell.name} (timeout {timeout} s)", detail=command)
+
+    def _refusal(self, command: str, context: ToolContext) -> str | None:
+        """Why the command cannot be started, checked before spawning anything."""
+        if not command.strip():
+            return "command must not be empty"
+        reason = find_blocked(command)
+        if reason:
+            return (
+                f"command blocked by nar's safety list ({reason}). Do not retry it or work "
+                "around it; tell the user what you wanted to do so they can run it themselves."
+            )
+        if self.shell is None:
+            return "no shell found: install PowerShell (Windows) or bash/sh (Linux, macOS)"
+        if not context.cwd.is_dir():
+            return f"working directory not found: {context.cwd}"
+        return None
 
 
 def _describe(shell: ShellSpec | None) -> str:

@@ -7,6 +7,7 @@ strings through the registry.
 from __future__ import annotations
 
 import copy
+import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -61,6 +62,16 @@ class ToolResult:
         return cls(output=message, is_error=True)
 
 
+@dataclass(frozen=True)
+class ToolPreview:
+    """What the user sees before approving a call; computing it changes nothing."""
+
+    title: str  # one line, e.g. "Edit src/app.py (+1 -1)"
+    detail: str | None = None  # command text, beginning of a new file, JSON arguments
+    diff: str | None = None  # unified diff, shown with the diff colors
+    error: str | None = None  # the message execute() would return; the call cannot run
+
+
 class Tool(ABC):
     """Base class for every tool.
 
@@ -84,3 +95,17 @@ class Tool(ABC):
             "description": self.description,
             "parameters": copy.deepcopy(self.parameters),
         }
+
+    def preview(self, arguments: dict[str, Any], context: ToolContext) -> ToolPreview:
+        """Describe what the call would do, without doing it.
+
+        Receives validated arguments and must not write, spawn or use the network.
+        The default shows the tool name and its arguments, which is enough for any
+        tool that does not override it.
+        """
+        shown = json.dumps(arguments, indent=2, ensure_ascii=False, default=str)
+        return ToolPreview(title=self.name, detail=shown)
+
+    def is_project_edit(self, arguments: dict[str, Any], context: ToolContext) -> bool:
+        """True when the call only edits files inside the project (``auto-edit`` skips asking)."""
+        return False

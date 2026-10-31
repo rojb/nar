@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nar.tools.base import NAME_PATTERN, Tool, ToolContext, ToolResult
+from nar.tools.base import NAME_PATTERN, Tool, ToolContext, ToolPreview, ToolResult
 
 
 class EchoTool(Tool):
@@ -88,3 +88,33 @@ def test_display_defaults_to_none_and_ok_accepts_it():
     assert ToolResult.ok("x").display is None
     assert ToolResult.ok("x", display="[ ] a").display == "[ ] a"
     assert ToolResult.error("x").display is None
+
+
+# --- previews and the project-edit declaration ------------------------------------
+
+
+def test_default_preview_shows_the_name_and_the_arguments_with_non_ascii_intact():
+    preview = EchoTool().preview({"query": "ñandú"}, ToolContext(cwd=Path(".")))
+
+    assert preview.title == "echo"
+    assert preview.detail == '{\n  "query": "ñandú"\n}'
+    assert preview.diff is None
+    assert preview.error is None
+
+
+def test_default_preview_does_not_raise_for_values_json_cannot_encode():
+    preview = EchoTool().preview({"path": Path("a.txt")}, ToolContext(cwd=Path(".")))
+
+    assert "a.txt" in preview.detail
+
+
+def test_default_is_project_edit_is_false():
+    assert EchoTool().is_project_edit({"text": "x"}, ToolContext(cwd=Path("."))) is False
+
+
+def test_tool_preview_is_frozen_and_optional_fields_default_to_none():
+    preview = ToolPreview(title="Run")
+
+    assert (preview.detail, preview.diff, preview.error) == (None, None, None)
+    with pytest.raises(AttributeError):
+        preview.title = "other"

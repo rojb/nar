@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from nar.tools.files import is_binary, os_error_message, resolve_path
+import pytest
+
+from nar.tools.files import is_binary, is_project_path, os_error_message, resolve_path
 
 
 def test_relative_path_resolves_under_cwd(tmp_path):
@@ -33,3 +35,40 @@ def test_os_error_message_names_action_path_and_reason(tmp_path):
     assert "cannot write" in message
     assert str(path) in message
     assert "Permission denied" in message
+
+
+# --- is_project_path ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["src/app.py", "./a.txt", ".github/ci.yml", ".narrow/x"])
+def test_paths_inside_the_project_count(tmp_path, raw):
+    assert is_project_path(resolve_path(raw, tmp_path), tmp_path)
+
+
+@pytest.mark.parametrize(
+    "raw", ["../x", ".git/hooks/pre-commit", ".nar/config.toml", ".git", ".nar"]
+)
+def test_paths_outside_or_in_protected_folders_do_not_count(tmp_path, raw):
+    assert not is_project_path(resolve_path(raw, tmp_path), tmp_path)
+
+
+def test_absolute_path_in_another_folder_does_not_count(tmp_path):
+    project = tmp_path / "project"
+    other = tmp_path / "other"
+    project.mkdir()
+    other.mkdir()
+
+    assert not is_project_path(other / "x.txt", project)
+
+
+def test_symbolic_link_pointing_outside_the_project_does_not_count(tmp_path):
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    project.mkdir()
+    outside.mkdir()
+    try:
+        (project / "link").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links cannot be created here")
+
+    assert not is_project_path(resolve_path("link/x.txt", project), project)
