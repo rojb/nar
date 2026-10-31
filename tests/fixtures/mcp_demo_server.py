@@ -4,11 +4,19 @@ Run it as ``python mcp_demo_server.py [flags]`` (stdio) or with ``--http PORT``.
 Flags switch on the unusual behaviors the tests need.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
-import argparse
 import os
 import sys
+
+# Write the pid before the slow imports, so a test can find the process even if it is
+# stopped while it is still starting.
+if "--pid-file" in sys.argv:
+    with open(sys.argv[sys.argv.index("--pid-file") + 1], "w", encoding="utf-8") as _handle:
+        _handle.write(str(os.getpid()))
+
+import argparse
 import threading
 import time
 from typing import Any
@@ -112,9 +120,6 @@ def env_dump(name: str) -> str:
 
 
 def main() -> None:
-    if args.pid_file:
-        with open(args.pid_file, "w", encoding="utf-8") as handle:
-            handle.write(str(os.getpid()))
     if args.exit_immediately:
         sys.exit(3)
     if args.noise:
