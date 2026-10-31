@@ -2,8 +2,8 @@
 
 `nar` is a CLI coding agent written in Python. It talks to a model (Anthropic, OpenRouter, DeepSeek or a
 local Ollama), lets it call tools (for now `read_file`) in a loop until it has an answer, and keeps
-the conversation in interactive mode. More tools, approvals, compaction and sessions arrive in
-later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
+the conversation in interactive mode. It asks before it edits files or runs commands. More tools,
+compaction and sessions arrive in later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
 
 ## Requirements
 
@@ -41,6 +41,7 @@ pip install -e ".[dev]"
 nar                      # interactive mode: one conversation, type "exit" to leave
 nar "explain this repo"  # single mode: runs the agent on one prompt and exits
 nar --provider ollama --model qwen2.5-coder "hello"   # choose provider/model for this run
+nar --approval auto-edit "add a docstring to main.py"  # edit project files without asking
 nar --version
 nar --help
 nar --show-config        # print the effective configuration and where each value comes from
@@ -65,9 +66,9 @@ again, until the model answers without tools or `max_turns` model calls were mad
 - **Turn limit:** when `max_turns` is reached `nar` stops with a message; single mode then exits
   with code 1.
 - **Provider errors** in interactive mode are shown on one line and the session continues.
-- **Tools that need approval** (`write_file`, `edit_file` and `shell`) only run with
-  `approval = "yolo"` until the approval prompts of RRG-69 exist; otherwise the model is told it
-  cannot use them.
+- **Tools that need approval** (`write_file`, `edit_file` and `shell`) ask you first, unless the
+  approval level says otherwise (see "Approvals"). If you say no, or `nar` cannot ask, the model
+  is told and can try something else or answer.
 - **System prompt:** it tells the model it is `nar`, how to use its tools, the working
   directory, OS and date, and adds the project's `AGENTS.md` when one is found.
 
@@ -100,9 +101,72 @@ Unknown keys, invalid values and malformed TOML stop `nar` with a one-line error
 code 1. `nar --show-config` prints each effective key with its source (`default`, the user
 file, the project file or `command line`).
 
-`--provider` and `--model` override the files for one run. A `model` set in a file is kept
+`--provider`, `--model` and `--approval` override the files for one run. A `model` set in a file is kept
 when only `--provider` is given, so pass both flags when switching to a provider that does not
 know that model.
+
+## Approvals
+
+Tools that change things (`write_file`, `edit_file` and `shell`) need your approval. The
+`approval` setting, or `--approval` for one run, chooses how much `nar` asks:
+
+| Level | `nar` asks before | Example |
+|---|---|---|
+| `ask` (default) | every file write, file edit and shell command | `nar "rename the helper"` |
+| `auto-edit` | shell commands, and file changes outside the project folder or inside `.git` or `.nar` | `nar --approval auto-edit "fix the typo in README.md"` |
+| `yolo` | nothing | `nar --approval yolo "run the tests and fix them"` |
+
+`auto-edit` applies edits without asking only for files inside the folder where you started
+`nar` (symbolic links and `..` that leave it do not count). `.git` and `.nar` are always asked
+about: git hooks and `.nar/config.toml` can make later commands run without another question.
+Other files that run code, such as `package.json` or CI workflows, are not special, so use
+`ask` if you want to see every edit.
+
+When `nar` asks, it shows what the call would do and waits on standard error:
+
+```text
+-> edit_file(path="hello.txt", old_string="world", new_string="nar")
+Approval needed: Edit hello.txt (+1 -1)
+--- a/hello.txt
++++ b/hello.txt
+@@ -1 +1 @@
+-hello world
++hello nar
+Allow edit_file? [y]es / [n]o / [a]lways allow edit_file this session:
+```
+
+Type a letter and press Enter (`yes`, `no` and `always` also work; an empty or unknown answer
+asks again, so a stray Enter never approves).
+
+- `y` runs this call.
+- `n` rejects it. `nar` then asks for an optional reason (Enter to skip). The model is told the
+  call was not run, with your reason if you gave one, so it can propose something else.
+  Nothing is changed on disk.
+- `a` runs this call and every later call of the same tool in this session, without asking.
+  It applies to the tool, not to a file or command: after `a` on `shell`, every later command
+  runs, whatever it is (the safety list of the shell tool still applies). Starting `nar` again
+  asks again.
+- End of input (Ctrl+D, or Ctrl+Z then Enter on Windows) rejects the call. Ctrl+C cancels the
+  whole request, as everywhere else.
+
+What you see for each built-in tool:
+
+| Tool | Preview |
+|---|---|
+| `edit_file` | the diff, with the number of added and removed lines |
+| `write_file` | `Create <path> (N lines)` with the beginning of the content, or `Overwrite <path>` with a diff against the current file; a path outside the project is shown in full |
+| `shell` | the shell, the timeout and the command text exactly as it will run |
+| any other tool | its name and arguments |
+
+Long previews are cut (60 lines of text, 100 lines of diff) with a note and
+`(preview shortened)`. A call that cannot run anyway (the text to replace is not found, a blocked
+command, a folder used as a file) is not shown to you; the model gets the error directly.
+
+Prompts and previews go to standard error, so `nar "..." > answer.txt` still saves only the
+answer. If `nar` cannot ask because standard input or standard error is not a terminal (a pipe,
+a redirect, CI), it does not wait: the call is refused, the model is told how to allow it, and
+the run goes on, so the exit code stays 0. In that case use `--approval auto-edit` or
+`--approval yolo`, or set `approval` in `.nar/config.toml`.
 
 ## Providers
 
@@ -175,9 +239,8 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 | `memory` | Save, delete and list short facts that are given to the agent in every new session. | no |
 | `shell` | Run a command line in PowerShell (Windows) or bash/sh; returns exit code, stdout and stderr. | yes |
 
-`write_file`, `edit_file` and `shell` are marked as requiring approval, but nothing asks yet: the
-approval prompt arrives with RRG-69. Until then the agent runs them only with
-`approval = "yolo"` (see "How the agent works"); `scripts/run_tool.py` always runs them.
+`write_file`, `edit_file` and `shell` require approval: `nar` asks before running them (see
+"Approvals"). `scripts/run_tool.py` always runs them.
 
 `edit_file` fails unless `old_string` matches exactly once, so include surrounding lines to make
 it unique. Line breaks written as `\n` match both LF and CRLF files; the new text uses the file's
@@ -255,8 +318,8 @@ over; standard input is closed, so interactive programs cannot work.
 - **Blocklist:** a few destructive commands (`rm -rf /`, formatting a disk, shutting the
   machine down, ...) are refused even at `yolo`. It is a safety net against mistakes, not a
   sandbox: obfuscated or indirect commands are not caught.
-- **Approval:** `shell` requires approval, so the agent runs it only with `approval = "yolo"`
-  until the approval prompts of RRG-69 exist; `scripts/run_tool.py` always runs it.
+- **Approval:** `shell` requires approval at every level except `yolo`, including `auto-edit`;
+  `scripts/run_tool.py` always runs it.
 
 ```bash
 python scripts/run_tool.py shell '{"command": "python --version"}'
