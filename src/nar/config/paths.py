@@ -22,3 +22,8 @@ def user_config() -> Path:
 
 def project_config(cwd: Path) -> Path:
     return cwd / ".nar" / "config.toml"
+
+
+def mcp_log_dir() -> Path:
+    """Where the standard error of stdio MCP servers is kept."""
+    return nar_home() / "mcp-logs"
