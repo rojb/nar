@@ -11,7 +11,7 @@ import click
 
 from nar import __version__
 from nar.cli import repl
-from nar.config import NarConfig, ProviderName, load_config
+from nar.config import ApprovalLevel, NarConfig, ProviderName, load_config
 from nar.context import ProjectInstructions, load_project_instructions
 from nar.errors import NarError
 
@@ -48,11 +48,28 @@ def run_single(prompt: str, config: NarConfig, instructions: ProjectInstructions
     help="LLM provider for this run (overrides the configuration).",
 )
 @click.option("--model", help="Model for this run (overrides the configuration).")
+@click.option(
+    "--approval",
+    type=click.Choice([level.value for level in ApprovalLevel]),
+    help=(
+        "Autonomy level for this run (overrides the configuration): ask asks before every "
+        "edit and command, auto-edit edits files inside the project without asking, "
+        "yolo never asks."
+    ),
+)
 @click.argument("prompt", required=False)
-def cli(prompt: str | None, show_config: bool, provider: str | None, model: str | None) -> int:
+def cli(
+    prompt: str | None,
+    show_config: bool,
+    provider: str | None,
+    model: str | None,
+    approval: str | None,
+) -> int:
     cwd = Path.cwd()
     # Invalid configuration stops startup here.
-    loaded = load_config(cwd, overrides={"provider": provider, "model": model})
+    loaded = load_config(
+        cwd, overrides={"provider": provider, "model": model, "approval": approval}
+    )
     if show_config:
         for line in loaded.describe(cwd):
             click.echo(line)

@@ -17,6 +17,7 @@ from nar.providers import factory
 from nar.tools import create_default_registry
 from nar.tools.memory import MemoryFileError, MemoryStore, memory_path
 from nar.ui.agent_view import AgentView
+from nar.ui.approval_prompt import TerminalPrompter
 
 
 class Outcome(StrEnum):
@@ -34,12 +35,14 @@ def create_agent(
     provider = factory.create_provider(config, on_retry=view.retry)
     view.waiting_text = f"waiting for {provider.model}..."
     context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
+    registry = create_default_registry(cwd)
+    prompter = TerminalPrompter(view.tools)
     return Agent(
         provider,
-        create_default_registry(cwd),
+        registry,
         context,
         max_turns=config.max_turns,
-        gate=approval_gate(config.approval),
+        gate=approval_gate(config.approval, prompter, registry.context),
     )
 
 

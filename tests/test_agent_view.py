@@ -103,3 +103,22 @@ def test_waiting_indicator_on_a_terminal_is_transient():
     view.handle(TextDelta("hi"))
     assert view._status is None
     view.finish()
+
+
+def test_a_question_asked_after_the_call_line_goes_to_stderr_with_the_spinner_stopped():
+    from nar.agent.approval import ApprovalRequest
+    from nar.tools.base import ToolPreview
+    from nar.ui.approval_prompt import TerminalPrompter
+
+    view, out, err = make_view()
+    prompter = TerminalPrompter(view.tools, read_line=lambda prompt: "y")
+    write = ToolCall("c1", "write_file", {"path": "a.txt", "content": "x"})
+
+    view.handle(ModelCallStarted(1))
+    assert view._status is not None  # the spinner runs while the model works
+    view.handle(ToolCallStarted(write))
+    assert view._status is None  # stopped before the gate would ask
+    prompter.ask(ApprovalRequest("write_file", ToolPreview(title="Create a.txt (1 lines)")))
+
+    assert out.getvalue() == ""
+    assert err.getvalue().index("write_file(") < err.getvalue().index("Allow write_file?")

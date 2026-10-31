@@ -467,3 +467,197 @@ def test_todos_checklist_shown_on_stderr(runner, fake_provider):
     assert "[x] Read file" in result.stderr
     assert "[>] Summarize" in result.stderr
     assert result.stdout == "Done.\n"
+
+
+# --- --approval ------------------------------------------------------------------------------
+
+
+def test_approval_flag_is_shown_as_the_command_line_source(runner, workdir):
+    result = runner.invoke(main, ["--approval", "yolo", "--show-config"])
+
+    assert result.exit_code == 0
+    assert "approval = yolo  (command line)" in result.output
+
+
+def test_approval_flag_beats_the_project_file(runner, workdir):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('approval = "ask"\n', encoding="utf-8")
+
+    result = runner.invoke(main, ["--approval", "auto-edit", "--show-config"])
+
+    assert "approval = auto-edit  (command line)" in result.output
+
+
+def test_without_the_flag_approval_comes_from_the_file_or_the_default(runner, workdir):
+    assert "approval = ask  (default)" in runner.invoke(main, ["--show-config"]).output
+
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('approval = "yolo"\n', encoding="utf-8")
+    result = runner.invoke(main, ["--show-config"])
+
+    assert "approval = yolo  (.nar/config.toml)" in result.output
+
+
+def test_invalid_approval_option_lists_the_levels(runner):
+    result = runner.invoke(main, ["--approval", "always", "hello"])
+
+    assert result.exit_code != 0
+    for level in ("ask", "auto-edit", "yolo"):
+        assert level in result.output
+
+
+def test_help_lists_the_approval_option(runner):
+    result = runner.invoke(main, ["--help"])
+
+    assert "--approval [ask|auto-edit|yolo]" in result.output
+
+
+# --- approvals in a run -------------------------------------------------------------------------
+
+
+def tool_call(name, **arguments):
+    return LLMResponse("", (ToolCall("c1", name, arguments),), StopReason.TOOL_CALLS)
+
+
+def write_file_call(path="a.txt", content="hi\n"):
+    return tool_call("write_file", path=path, content=content)
+
+
+@pytest.fixture
+def terminal(monkeypatch):
+    """Make the prompter think a person is there; calling it scripts what they type."""
+    monkeypatch.setattr("nar.ui.approval_prompt.TerminalPrompter.available", lambda self: True)
+
+    def type_lines(*lines):
+        queue = list(lines)
+
+        def fake_input(prompt=""):
+            line = queue.pop(0)
+            if isinstance(line, BaseException):
+                raise line
+            return line
+
+        monkeypatch.setattr("builtins.input", fake_input)
+        return queue
+
+    return type_lines
+
+
+def test_single_mode_that_cannot_ask_refuses_and_still_answers(runner, workdir, fake_provider):
+    fake_provider.script = [write_file_call(), LLMResponse("I could not create it.")]
+
+    result = runner.invoke(main, ["create a.txt"])
+
+    assert result.exit_code == 0
+    assert not (workdir / "a.txt").exists()
+    assert result.stdout == "I could not create it.\n"
+    assert "needs approval (cannot ask)" in result.stderr
+    assert "Allow write_file?" not in result.stderr + result.stdout
+    assert "needs user approval" in fake_provider.requests[1][-1].content
+
+
+def test_single_mode_asks_on_the_terminal_and_runs_the_approved_call(
+    runner, workdir, fake_provider, terminal
+):
+    terminal("y")
+    fake_provider.script = [write_file_call(), LLMResponse("Created.")]
+
+    result = runner.invoke(main, ["create a.txt"])
+
+    assert result.exit_code == 0
+    assert (workdir / "a.txt").read_bytes() == b"hi\n"
+    assert result.stdout == "Created.\n"
+    assert "Approval needed: Create a.txt (1 lines)" in result.stderr
+    assert "Allow write_file?" in result.stderr
+    assert "Approval needed" not in result.stdout
+
+
+def test_single_mode_rejection_with_a_reason_reaches_the_model(
+    runner, workdir, fake_provider, terminal
+):
+    terminal("n", "put it in docs instead")
+    fake_provider.script = [write_file_call(), LLMResponse("Understood.")]
+
+    result = runner.invoke(main, ["create a.txt"])
+
+    assert result.exit_code == 0
+    assert not (workdir / "a.txt").exists()
+    assert "rejected by user" in result.stderr
+    assert 'The user said: "put it in docs instead"' in fake_provider.requests[1][-1].content
+
+
+def test_auto_edit_edits_inside_the_project_without_asking(
+    runner, workdir, fake_provider, terminal
+):
+    (workdir / "f.txt").write_text("one\n", encoding="utf-8")
+    asked = terminal()  # any question would run out of lines and fail the run
+    edit = tool_call("edit_file", path="f.txt", old_string="one", new_string="two")
+    fake_provider.script = [edit, LLMResponse("Edited.")]
+
+    result = runner.invoke(main, ["--approval", "auto-edit", "edit f.txt"])
+
+    assert result.exit_code == 0
+    assert (workdir / "f.txt").read_text(encoding="utf-8") == "two\n"
+    assert "Allow" not in result.stderr
+    assert asked == []
+
+
+def test_auto_edit_still_asks_for_a_shell_command(runner, workdir, fake_provider, terminal):
+    terminal("n", "")
+    fake_provider.script = [tool_call("shell", command="python --version"), LLMResponse("Ok.")]
+
+    result = runner.invoke(main, ["--approval", "auto-edit", "run python"])
+
+    assert "Allow shell?" in result.stderr
+    assert "rejected by user" in result.stderr
+
+
+def test_yolo_runs_without_a_question(runner, workdir, fake_provider, terminal):
+    asked = terminal()
+    fake_provider.script = [write_file_call(), LLMResponse("Created.")]
+
+    result = runner.invoke(main, ["--approval", "yolo", "create a.txt"])
+
+    assert result.exit_code == 0
+    assert (workdir / "a.txt").exists()
+    assert "Allow" not in result.stderr
+    assert asked == []
+
+
+def test_interactive_mode_asks_and_goes_on_to_the_next_prompt(
+    runner, workdir, fake_provider, terminal
+):
+    terminal("create a.txt", "y", "thanks", "exit")
+    fake_provider.script = [write_file_call(), LLMResponse("Created."), LLMResponse("Welcome.")]
+
+    result = runner.invoke(main, [])
+
+    assert result.exit_code == 0
+    assert (workdir / "a.txt").exists()
+    assert "Allow write_file?" in result.stderr
+    assert "Welcome." in result.stdout
+
+
+def test_ctrl_c_at_the_question_cancels_the_request_in_interactive_mode(
+    runner, workdir, fake_provider, terminal
+):
+    terminal("create a.txt", KeyboardInterrupt(), "again", "exit")
+    fake_provider.script = [write_file_call(), LLMResponse("second answer")]
+
+    result = runner.invoke(main, [])
+
+    assert result.exit_code == 0
+    assert "cancelled" in result.stderr
+    assert not (workdir / "a.txt").exists()
+    assert [m.content for m in fake_provider.requests[1]] == ["again"]
+
+
+def test_ctrl_c_at_the_question_exits_130_in_single_mode(runner, workdir, fake_provider, terminal):
+    terminal(KeyboardInterrupt())
+    fake_provider.script = [write_file_call()]
+
+    result = runner.invoke(main, ["create a.txt"])
+
+    assert result.exit_code == 130
+    assert "cancelled" in result.stderr
+    assert not (workdir / "a.txt").exists()
