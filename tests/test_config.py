@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -81,7 +83,8 @@ def test_nested_key_override(home, project):
     write(home / "config.toml", '[mcp_servers.jira]\ncommand = "a"\nargs = ["x"]\n')
     write(project / ".nar" / "config.toml", '[mcp_servers.jira]\nargs = ["y"]\n')
     loaded = load_config(project)
-    assert loaded.config.mcp_servers["jira"] == {"command": "a", "args": ["y"]}
+    jira = loaded.config.mcp_servers["jira"]
+    assert (jira.command, jira.args) == ("a", ["y"])
 
 
 def test_approval_default_and_valid_values(home, project):
@@ -241,3 +244,157 @@ def test_invalid_max_turns_names_setting_and_file(home, project):
         load_config(project)
     assert "max_turns" in info.value.message
     assert str(path) in info.value.message
+
+
+# --- MCP server definitions (RRG-74) ---
+
+
+def mcp_project(project: Path, body: str) -> Path:
+    return write(project / ".nar" / "config.toml", body)
+
+
+def mcp_error(project: Path) -> str:
+    with pytest.raises(ConfigError) as info:
+        load_config(project)
+    return info.value.message
+
+
+def test_stdio_and_http_servers_load_with_defaults(home, project):
+    mcp_project(
+        project,
+        '[mcp_servers.files]\ncommand = "npx"\nargs = ["-y", "srv"]\n'
+        '[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\n'
+        'headers = { Authorization = "Bearer ${LINEAR_API_KEY}" }\n',
+    )
+    loaded = load_config(project)
+    files, linear = loaded.config.mcp_servers["files"], loaded.config.mcp_servers["linear"]
+    assert (files.command, files.args, files.transport) == ("npx", ["-y", "srv"], "stdio")
+    assert (linear.url, linear.transport) == ("https://mcp.linear.app/mcp", "http")
+    for server in (files, linear):
+        assert server.enabled is True
+        assert server.enabled_tools is None
+        assert (server.startup_timeout, server.tool_timeout) == (30, 60)
+    lines = loaded.describe(project)
+    assert "mcp_servers.files.command = npx  (.nar/config.toml)" in lines
+    assert "mcp_servers.files.startup_timeout = 30  (default)" in lines
+    assert "mcp_servers.files.enabled = true  (default)" in lines
+
+
+def test_command_and_url_together_fail_naming_server(home, project):
+    path = mcp_project(project, '[mcp_servers.both]\ncommand = "a"\nurl = "http://x"\n')
+    message = mcp_error(project)
+    assert "mcp_servers.both" in message
+    assert "exactly one of 'command' or 'url'" in message
+    assert str(path) in message
+
+
+def test_neither_command_nor_url_fails_naming_server(home, project):
+    mcp_project(project, "[mcp_servers.none]\nenabled = true\n")
+    message = mcp_error(project)
+    assert "mcp_servers.none" in message
+    assert "exactly one of 'command' or 'url'" in message
+
+
+def test_url_with_args_fails_naming_args(home, project):
+    mcp_project(project, '[mcp_servers.r]\nurl = "http://x"\nargs = ["a"]\n')
+    message = mcp_error(project)
+    assert "mcp_servers.r" in message
+    assert "'args'" in message
+
+
+def test_command_with_headers_fails_naming_headers(home, project):
+    mcp_project(project, '[mcp_servers.r]\ncommand = "x"\nheaders = { A = "b" }\n')
+    message = mcp_error(project)
+    assert "mcp_servers.r" in message
+    assert "'headers'" in message
+
+
+def test_typo_in_server_key_names_setting_and_file(home, project):
+    path = mcp_project(project, '[mcp_servers.s]\ncomand = "npx"\n')
+    message = mcp_error(project)
+    assert "unknown setting 'mcp_servers.s.comand'" in message
+    assert str(path) in message
+
+
+@pytest.mark.parametrize("line", ["tool_timeout = 0", "startup_timeout = -1"])
+def test_non_positive_timeout_fails_naming_key(home, project, line):
+    mcp_project(project, f'[mcp_servers.s]\ncommand = "x"\n{line}\n')
+    message = mcp_error(project)
+    assert line.split()[0] in message
+    assert "mcp_servers.s" in message
+
+
+def test_server_names_differing_only_by_dash_are_ambiguous(home, project):
+    mcp_project(
+        project, '[mcp_servers.my-srv]\ncommand = "a"\n[mcp_servers.my_srv]\ncommand = "b"\n'
+    )
+    message = mcp_error(project)
+    assert "my-srv" in message and "my_srv" in message
+
+
+@pytest.mark.parametrize("name", ["jira server", "a" * 33, "-lead", "dot.ted"])
+def test_invalid_server_names_fail(home, project, name):
+    mcp_project(project, f'[mcp_servers."{name}"]\ncommand = "a"\n')
+    assert name in mcp_error(project)
+
+
+def test_server_name_of_32_characters_is_valid(home, project):
+    mcp_project(project, f'[mcp_servers.{"a" * 32}]\ncommand = "a"\n')
+    assert "a" * 32 in load_config(project).config.mcp_servers
+
+
+def test_servers_from_both_files_merge_and_project_can_disable(home, project):
+    write(home / "config.toml", '[mcp_servers.jira]\ncommand = "jira"\n')
+    mcp_project(
+        project,
+        '[mcp_servers.linear]\nurl = "http://x"\n[mcp_servers.jira]\nenabled = false\n',
+    )
+    servers = load_config(project).config.mcp_servers
+    assert set(servers) == {"jira", "linear"}
+    assert servers["jira"].enabled is False
+    assert servers["jira"].command == "jira"
+
+
+def test_configuration_does_not_import_the_mcp_sdk():
+    code = "import nar.config, sys; assert 'mcp' not in sys.modules"
+    assert subprocess.run([sys.executable, "-c", code]).returncode == 0
+
+
+# --- masking of MCP secrets in --show-config ---
+
+SECRET_SERVER = (
+    '[mcp_servers.s]\nurl = "https://example.com/mcp"\n'
+    'headers = { Authorization = "Bearer ${LINEAR_API_KEY}", X-Team = "abc123" }\n'
+)
+
+
+def test_describe_shows_references_and_masks_literal_headers(home, project):
+    mcp_project(project, SECRET_SERVER)
+    lines = load_config(project).describe(project)
+    text = "\n".join(lines)
+    assert (
+        "mcp_servers.s.headers.Authorization = Bearer ${LINEAR_API_KEY}  (.nar/config.toml)"
+        in lines
+    )
+    assert "mcp_servers.s.headers.X-Team = ********  (.nar/config.toml)" in lines
+    assert "abc123" not in text
+
+
+def test_describe_masks_literal_env_values(home, project):
+    mcp_project(
+        project,
+        '[mcp_servers.s]\ncommand = "x"\nenv = { TOKEN = "lit-secret", FWD = "${TOKEN}" }\n',
+    )
+    lines = load_config(project).describe(project)
+    assert "mcp_servers.s.env.TOKEN = ********  (.nar/config.toml)" in lines
+    assert "mcp_servers.s.env.FWD = ${TOKEN}  (.nar/config.toml)" in lines
+    assert "lit-secret" not in "\n".join(lines)
+
+
+def test_describe_does_not_mask_command_and_url(home, project):
+    mcp_project(
+        project, '[mcp_servers.a]\ncommand = "npx"\n[mcp_servers.b]\nurl = "http://h/mcp"\n'
+    )
+    lines = load_config(project).describe(project)
+    assert "mcp_servers.a.command = npx  (.nar/config.toml)" in lines
+    assert "mcp_servers.b.url = http://h/mcp  (.nar/config.toml)" in lines

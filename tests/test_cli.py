@@ -210,6 +210,22 @@ def test_show_config_project_value_and_source(runner, workdir):
     assert "model = b  (.nar/config.toml)" in result.output
 
 
+def test_show_config_masks_literal_mcp_secrets_and_keeps_references(runner, workdir, monkeypatch):
+    monkeypatch.setenv("LINEAR_API_KEY", "secret-value")
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text(
+        '[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\n'
+        'headers = { Authorization = "Bearer ${LINEAR_API_KEY}", X-Team = "abc123" }\n',
+        encoding="utf-8",
+    )
+    result = runner.invoke(main, ["--show-config"])
+    assert result.exit_code == 0
+    assert "mcp_servers.linear.headers.Authorization = Bearer ${LINEAR_API_KEY}" in result.output
+    assert "mcp_servers.linear.headers.X-Team = ********" in result.output
+    assert "abc123" not in result.output
+    assert "secret-value" not in result.output
+
+
 def test_invalid_config_exits_one_with_one_line(runner, workdir):
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('approval = "always"\n', encoding="utf-8")

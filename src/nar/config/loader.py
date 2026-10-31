@@ -18,6 +18,8 @@ from nar.errors import ConfigError
 
 DEFAULT_SOURCE = "default"
 COMMAND_LINE_SOURCE = "command line"
+MASK = "********"
+_SECRET_KEY = re.compile(r"^mcp_servers\.[^.]+\.(env|headers)\.")
 
 
 @dataclass(frozen=True)
@@ -32,11 +34,12 @@ class LoadedConfig:
     def describe(self, cwd: Path | None = None) -> list[str]:
         """Lines ``key = value  (source)`` for ``--show-config``."""
         flat: dict[str, Any] = {}
-        _flatten(self.config.model_dump(mode="json"), "", flat)
+        _flatten(self.config.model_dump(mode="json", exclude_none=True), "", flat)
         lines = []
         for key, value in flat.items():
             source = self.provenance.get(key, DEFAULT_SOURCE)
-            lines.append(f"{key} = {_format_value(value)}  ({_display_source(source, cwd)})")
+            shown = _mask_secret(key, value)
+            lines.append(f"{key} = {_format_value(shown)}  ({_display_source(source, cwd)})")
         return lines
 
 
@@ -125,6 +128,11 @@ def _source_for(loc: tuple[Any, ...], provenance: dict[str, str]) -> str:
         if key in provenance:
             return provenance[key]
         parts.pop()
+    # An error about a whole table (such as one MCP server): use the file that defined it.
+    inner = ".".join(str(p) for p in loc) + "."
+    for key, source in provenance.items():
+        if key.startswith(inner) and source != DEFAULT_SOURCE:
+            return source
     return DEFAULT_SOURCE
 
 
@@ -159,6 +167,13 @@ def _translate(exc: ValidationError, provenance: dict[str, str]) -> ConfigError:
         else:
             messages.append(f"invalid setting '{key}' in {where}: {err['msg']}")
     return ConfigError("; ".join(messages), path=first_path)
+
+
+def _mask_secret(key: str, value: Any) -> Any:
+    """Hide literal ``env`` and ``headers`` values of MCP servers; keep ``${NAME}`` references."""
+    if _SECRET_KEY.match(key) and isinstance(value, str) and "${" not in value:
+        return MASK
+    return value
 
 
 def _format_value(value: Any) -> str:
