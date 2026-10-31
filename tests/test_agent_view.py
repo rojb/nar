@@ -122,3 +122,10 @@ def test_a_question_asked_after_the_call_line_goes_to_stderr_with_the_spinner_st
 
     assert out.getvalue() == ""
     assert err.getvalue().index("write_file(") < err.getvalue().index("Allow write_file?")
+
+
+def test_note_is_a_literal_line_on_stderr():
+    view, out, err = make_view()
+    view.note("connecting MCP servers: [red]a[/red], b ...")
+    assert out.getvalue() == ""
+    assert err.getvalue() == "connecting MCP servers: [red]a[/red], b ...\n"
