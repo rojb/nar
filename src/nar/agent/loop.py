@@ -14,7 +14,6 @@ from nar.agent.events import (
     ToolCallStarted,
     TurnLimitReached,
 )
-from nar.config.models import ApprovalLevel
 from nar.context.manager import ContextManager
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
@@ -23,21 +22,6 @@ from nar.tools.registry import ToolRegistry
 
 # Runs before a tool; returning a result skips the tool and sends that result instead.
 ToolGate = Callable[[Tool, Mapping[str, Any]], ToolResult | None]
-
-
-def approval_gate(level: ApprovalLevel) -> ToolGate:
-    """Until RRG-69 can ask the user, approval-required tools run only at ``yolo``."""
-
-    def gate(tool: Tool, arguments: Mapping[str, Any]) -> ToolResult | None:
-        if not tool.requires_approval or level is ApprovalLevel.YOLO:
-            return None
-        return ToolResult.error(
-            f"{tool.name} needs user approval, which nar cannot ask for yet; "
-            "it only runs when the approval level is 'yolo'. Tell the user what you "
-            "wanted to do instead."
-        )
-
-    return gate
 
 
 class Agent:

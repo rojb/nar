@@ -317,7 +317,7 @@ def test_default_registry_shell_timeout_is_a_bounded_integer(tmp_path):
 
 
 def test_approval_gate_refuses_shell_below_yolo(tmp_path):
-    from nar.agent.loop import approval_gate
+    from nar.agent.approval import approval_gate
     from nar.config import ApprovalLevel
 
     shell = create_default_registry(tmp_path).get("shell")
@@ -329,3 +329,9 @@ def test_approval_gate_refuses_shell_below_yolo(tmp_path):
     assert refused.is_error
     assert "shell" in refused.output
     assert approval_gate(ApprovalLevel.YOLO)(shell, arguments) is None
+
+
+def test_context_property_is_the_context_the_registry_runs_tools_with(tmp_path):
+    context = ToolContext(cwd=tmp_path)
+
+    assert ToolRegistry(context).context is context

@@ -2,6 +2,7 @@ from contextlib import closing
 
 import pytest
 
+from nar.agent.approval import ApprovalAnswer, ApprovalDecision, approval_gate
 from nar.agent.events import (
     AnswerCutOff,
     ModelCallStarted,
@@ -10,7 +11,7 @@ from nar.agent.events import (
     ToolCallStarted,
     TurnLimitReached,
 )
-from nar.agent.loop import Agent, approval_gate
+from nar.agent.loop import Agent
 from nar.config.models import ApprovalLevel
 from nar.context.manager import ContextManager
 from nar.errors import ProviderError
@@ -23,8 +24,11 @@ from nar.providers.messages import (
     TextDelta,
     ToolCall,
 )
+from nar.tools import ToolContext
 from nar.tools.base import Tool, ToolResult
+from nar.tools.edit_file import EditFileTool
 from nar.tools.registry import ToolRegistry
+from nar.tools.write_file import WriteFileTool
 
 
 class ScriptedProvider(LLMProvider):
@@ -226,3 +230,162 @@ def test_interrupt_inside_a_tool_rolls_back():
     with pytest.raises(KeyboardInterrupt):
         run(agent)
     assert agent.context.messages == ()
+
+
+# --- asking the user before approval-required tools ------------------------------------------
+
+
+class ScriptedPrompter:
+    """Answers with the queued answers; ``log`` records the order of questions."""
+
+    def __init__(self, *answers, available=True, log=None):
+        self.answers = list(answers)
+        self.is_available = available
+        self.requests = []
+        self.log = log if log is not None else []
+
+    def available(self):
+        return self.is_available
+
+    def ask(self, request):
+        self.log.append(f"ask {request.tool_name}")
+        self.requests.append(request)
+        answer = self.answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+
+APPROVE = ApprovalAnswer(ApprovalDecision.APPROVE)
+APPROVE_SESSION = ApprovalAnswer(ApprovalDecision.APPROVE_SESSION)
+
+
+def reject(reason=None):
+    return ApprovalAnswer(ApprovalDecision.REJECT, reason)
+
+
+def make_asking_agent(tmp_path, provider, prompter, *tools, level=ApprovalLevel.ASK):
+    registry = ToolRegistry(ToolContext(cwd=tmp_path))
+    for tool in tools:
+        registry.register(tool)
+    gate = approval_gate(level, prompter, registry.context)
+    return Agent(provider, registry, ContextManager("You are nar."), gate=gate)
+
+
+def edit_call(call_id, old, new, path="hello.txt"):
+    return call(call_id, "edit_file", path=path, old_string=old, new_string=new)
+
+
+def test_a_rejected_edit_leaves_the_file_and_the_model_proposes_another_one(tmp_path):
+    target = tmp_path / "hello.txt"
+    target.write_bytes(b"hello world\n")
+    provider = ScriptedProvider(
+        tool_answer(edit_call("c1", "world", "nar")),
+        tool_answer(edit_call("c2", "hello", "hi")),
+        LLMResponse("changed the greeting instead"),
+    )
+    prompter = ScriptedPrompter(reject("keep the second word"), APPROVE)
+    agent = make_asking_agent(tmp_path, provider, prompter, EditFileTool())
+
+    events = run(agent)
+
+    # the rejection did not touch the file and reached the model in its next call
+    assert [request.tool_name for request in prompter.requests] == ["edit_file", "edit_file"]
+    rejection = provider.requests[1]["messages"][-1]
+    assert rejection.tool_call_id == "c1"
+    assert rejection.is_error
+    assert "rejected" in rejection.content
+    assert 'The user said: "keep the second word"' in rejection.content
+    # the model's next answer, a different edit, was asked about again and applied
+    assert target.read_bytes() == b"hi world\n"
+    results = [e.result for e in events if isinstance(e, ToolCallFinished)]
+    assert [r.is_error for r in results] == [True, False]
+    assert results[0].summary == "rejected by user"
+    assert isinstance(events[-1], RequestFinished)
+
+
+def test_two_calls_in_one_answer_get_one_result_each_in_the_original_order(tmp_path):
+    first = tmp_path / "a.txt"
+    provider = ScriptedProvider(
+        tool_answer(
+            call("c1", "write_file", path=str(first), content="one\n"),
+            call("c2", "dangerous", text="x"),
+        ),
+        LLMResponse("done"),
+    )
+    prompter = ScriptedPrompter(reject(), APPROVE)
+    dangerous = DangerousTool()
+    agent = make_asking_agent(tmp_path, provider, prompter, WriteFileTool(), dangerous)
+
+    events = run(agent)
+
+    assert not first.exists()
+    assert dangerous.seen == ["x"]
+    finished = [e for e in events if isinstance(e, ToolCallFinished)]
+    assert [e.call.id for e in finished] == ["c1", "c2"]
+    assert [e.result.is_error for e in finished] == [True, False]
+    tool_messages = [m for m in provider.requests[1]["messages"] if m.tool_call_id]
+    assert [m.tool_call_id for m in tool_messages] == ["c1", "c2"]
+
+
+def test_the_question_comes_after_the_call_started_and_before_it_finished(tmp_path):
+    log = []
+    provider = ScriptedProvider(tool_answer(call("c1", "dangerous", text="x")), LLMResponse("ok"))
+    prompter = ScriptedPrompter(APPROVE, log=log)
+    agent = make_asking_agent(tmp_path, provider, prompter, DangerousTool())
+
+    for event in agent.run("go"):
+        log.append(type(event).__name__)
+
+    started = log.index("ToolCallStarted")
+    assert log[started : started + 3] == ["ToolCallStarted", "ask dangerous", "ToolCallFinished"]
+
+
+def test_an_interrupt_while_asking_rolls_the_request_back_and_propagates(tmp_path):
+    provider = ScriptedProvider(tool_answer(call("c1", "dangerous", text="x")))
+    prompter = ScriptedPrompter(KeyboardInterrupt())
+    dangerous = DangerousTool()
+    agent = make_asking_agent(tmp_path, provider, prompter, dangerous)
+
+    with pytest.raises(KeyboardInterrupt):
+        run(agent)
+
+    assert agent.context.messages == ()
+    assert dangerous.seen == []
+
+
+def test_a_tool_approved_for_the_session_is_not_asked_in_the_next_request(tmp_path):
+    provider = ScriptedProvider(
+        tool_answer(call("c1", "dangerous", text="a")),
+        LLMResponse("one"),
+        tool_answer(call("c2", "dangerous", text="b")),
+        LLMResponse("two"),
+    )
+    prompter = ScriptedPrompter(APPROVE_SESSION)
+    dangerous = DangerousTool()
+    agent = make_asking_agent(tmp_path, provider, prompter, dangerous)
+
+    run(agent, "first")
+    run(agent, "second")
+
+    assert dangerous.seen == ["a", "b"]
+    assert len(prompter.requests) == 1
+
+
+def test_without_a_prompter_the_request_still_reaches_the_final_answer(tmp_path):
+    provider = ScriptedProvider(
+        tool_answer(call("c1", "dangerous", text="x")),
+        LLMResponse("I could not do that"),
+    )
+    dangerous = DangerousTool()
+    agent = make_asking_agent(tmp_path, provider, None, dangerous)
+
+    events = run(agent)
+
+    result = next(e.result for e in events if isinstance(e, ToolCallFinished))
+    assert result.is_error
+    assert "needs user approval" in result.output
+    assert result.summary == "needs approval (cannot ask)"
+    assert dangerous.seen == []
+    assert isinstance(events[-1], RequestFinished)
+    assert events[-1].response.content == "I could not do that"

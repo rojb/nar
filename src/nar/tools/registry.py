@@ -23,6 +23,11 @@ class ToolRegistry:
         self._context = context or ToolContext(cwd=Path.cwd())
         self._tools: dict[str, Tool] = {}
 
+    @property
+    def context(self) -> ToolContext:
+        """The context every tool of this registry runs with."""
+        return self._context
+
     def register(self, tool: Tool) -> None:
         """Add a tool; raises :class:`ToolError` for a bad name, duplicate or schema."""
         name = tool.name
