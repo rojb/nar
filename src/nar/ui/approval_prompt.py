@@ -35,12 +35,12 @@ class TerminalPrompter:
         renderer: ToolRenderer,
         *,
         stdin: TextIO | None = None,
-        read_line: Callable[[str], str] = input,
+        read_line: Callable[[str], str] | None = None,
     ) -> None:
         self._renderer = renderer
         self._console = renderer.console
         self._stdin = stdin  # None: whatever sys.stdin is when asked
-        self._read_line = read_line
+        self._read_line = read_line  # None: the builtin input, looked up when asked
 
     def available(self) -> bool:
         """True when both the input and the console we print on are terminals.
@@ -58,7 +58,7 @@ class TerminalPrompter:
         while True:
             self._console.print(Text(question), end="", highlight=False)
             try:
-                answer = self._read_line("").strip().lower()
+                answer = self._read().strip().lower()
             except EOFError:
                 self._console.print()
                 return ApprovalAnswer(ApprovalDecision.REJECT)
@@ -71,10 +71,13 @@ class TerminalPrompter:
                 return ApprovalAnswer(ApprovalDecision.REJECT, self._ask_reason())
             self._renderer.show_detail("Please answer y, n or a.")
 
+    def _read(self) -> str:
+        return (self._read_line or input)("")
+
     def _ask_reason(self) -> str | None:
         self._console.print(Text("Reason (optional, Enter to skip): "), end="", highlight=False)
         try:
-            reason = self._read_line("").strip()
+            reason = self._read().strip()
         except EOFError:
             self._console.print()
             return None
