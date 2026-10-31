@@ -16,6 +16,17 @@ class ToolSpec:
     description: str | None
     input_schema: dict[str, Any] = field(default_factory=dict)
     title: str | None = None
+    # What the server claims; recorded for display only, it never skips an approval question.
+    read_only_hint: bool | None = None
+
+
+class McpProtocolError(Exception):
+    """The server answered a call with a protocol-level error."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 class ServerGone(Exception):

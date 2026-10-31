@@ -24,7 +24,7 @@ from mcp_types import CONNECTION_CLOSED, CallToolResult
 
 from nar.config import McpServerConfig
 from nar.config.paths import mcp_log_dir
-from nar.mcp.types import CLOSE_GRACE_SECONDS, ServerGone, ToolSpec
+from nar.mcp.types import CLOSE_GRACE_SECONDS, McpProtocolError, ServerGone, ToolSpec
 
 MAX_TOOL_PAGES = 100
 MAX_REASON_CHARS = 200
@@ -85,7 +85,13 @@ async def _list_all(client: Client) -> list[ToolSpec]:
     for _ in range(MAX_TOOL_PAGES):
         page = await client.list_tools(cursor=cursor)
         tools += [
-            ToolSpec(tool.name, tool.description, dict(tool.input_schema), tool.title)
+            ToolSpec(
+                tool.name,
+                tool.description,
+                dict(tool.input_schema),
+                tool.title,
+                tool.annotations.read_only_hint if tool.annotations else None,
+            )
             for tool in page.tools
         ]
         cursor = page.next_cursor
@@ -138,14 +144,14 @@ class ServerConnection:
     async def call_tool(
         self, tool: str, arguments: dict[str, Any], timeout: float
     ) -> CallToolResult:
-        """Call a tool; raises :class:`ServerGone`, ``MCPError`` or ``TimeoutError``."""
+        """Call a tool; raises :class:`ServerGone`, ``McpProtocolError`` or ``TimeoutError``."""
         if self._failure is not None or self._client is None:
             raise ServerGone(self.name, self._failure or "not connected")
         try:
             return await asyncio.wait_for(self._client.call_tool(tool, arguments), timeout)
         except MCPError as error:
             if error.code != CONNECTION_CLOSED:
-                raise
+                raise McpProtocolError(error.code, error.message) from None
             self._mark_failed("the connection was closed")
         except (anyio.ClosedResourceError, anyio.BrokenResourceError):
             self._mark_failed("the connection was closed")

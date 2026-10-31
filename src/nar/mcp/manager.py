@@ -14,12 +14,16 @@ from typing import TYPE_CHECKING, Any
 
 from nar.config import McpServerConfig
 from nar.config.paths import mcp_log_dir
+from nar.errors import ToolError
 from nar.mcp.expand import MissingVariable, expand_server, referenced_values
+from nar.mcp.naming import tool_name
+from nar.mcp.tool import McpTool
 from nar.mcp.types import CLOSE_GRACE_SECONDS, ServerGone, ToolSpec
 
 if TYPE_CHECKING:
     from nar.mcp.connection import ServerConnection
     from nar.mcp.runtime import McpRuntime
+    from nar.tools.registry import ToolRegistry
 
 CONNECTED = "connected"
 FAILED = "failed"
@@ -166,7 +170,7 @@ class McpManager:
     def call(self, server: str, tool: str, arguments: dict[str, Any], timeout: float) -> Any:
         """Call a tool of a connected server.
 
-        Raises :class:`ServerGone`, the SDK's ``MCPError`` or ``TimeoutError``.
+        Raises :class:`ServerGone`, :class:`McpProtocolError` or ``TimeoutError``.
         """
         entry = self._entries.get(server)
         if entry is None or entry.state != CONNECTED or entry.connection is None:
@@ -176,6 +180,44 @@ class McpManager:
             entry.connection.call_tool(tool, arguments, timeout),
             timeout=timeout + CALL_BACKSTOP_SECONDS,
         )
+
+    def register_tools(self, registry: ToolRegistry, warn: Callable[[str], None]) -> None:
+        """Offer the tools of every connected server to the model as ``mcp__server__tool``."""
+        taken = set(registry.names())
+        for entry in self._entries.values():
+            if entry.state != CONNECTED:
+                continue
+            specs = self._allowed(entry, warn)
+            for spec in specs:
+                name = tool_name(entry.name, spec.name, taken)
+                if name in taken:
+                    warn(
+                        f"warning: MCP tool '{spec.name}' of server '{entry.name}' skipped: "
+                        f"its name collides with '{name}'"
+                    )
+                    continue
+                tool = McpTool(name, entry.name, spec, self, entry.config.tool_timeout)
+                try:
+                    registry.register(tool)
+                except ToolError as error:
+                    warn(
+                        f"warning: MCP tool '{spec.name}' of server '{entry.name}' "
+                        f"skipped: {error.message}"
+                    )
+                    continue
+                taken.add(name)
+                entry.registered.append(name)
+
+    @staticmethod
+    def _allowed(entry: _Entry, warn: Callable[[str], None]) -> list[ToolSpec]:
+        wanted = entry.config.enabled_tools
+        if wanted is None:
+            return entry.specs
+        offered = {spec.name for spec in entry.specs}
+        for name in wanted:
+            if name not in offered:
+                warn(f"warning: MCP server '{entry.name}' has no tool '{name}' (see enabled_tools)")
+        return [spec for spec in entry.specs if spec.name in wanted]
 
     def close(self) -> None:
         """Close every connection and end the child processes. Safe to call twice."""
