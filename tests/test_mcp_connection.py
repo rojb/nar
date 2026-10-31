@@ -1,10 +1,23 @@
+import socket
+import subprocess
+import sys
 import time
 
 import pytest
 
-from mcp_support import process_alive, read_pid, stdio_config, wait_for, wait_until_gone
+from mcp_support import (
+    FIXTURE,
+    FakeHttpServer,
+    free_port,
+    process_alive,
+    read_pid,
+    stdio_config,
+    wait_for,
+    wait_until_gone,
+)
+from nar.config import McpServerConfig
 from nar.config.paths import mcp_log_dir
-from nar.mcp.connection import ServerConnection, log_path_for
+from nar.mcp.connection import ServerConnection, describe_failure, log_path_for
 from nar.mcp.runtime import McpRuntime
 from nar.mcp.types import ServerGone
 
@@ -191,3 +204,141 @@ def test_command_and_args_run_with_the_interpreter_of_the_tests(runtime, connect
     connection, _ = connect(config)
     result = call(runtime, connection, "env_dump", {"name": "PATH"})
     assert result.content[0].text != "<unset>"
+
+
+# --- streamable HTTP ---
+
+
+@pytest.fixture
+def http_demo():
+    """The demo server on a free localhost port, in a subprocess."""
+    port = free_port()
+    process = subprocess.Popen(
+        [sys.executable, str(FIXTURE), "--http", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    def listening() -> bool:
+        with socket.socket() as sock:
+            sock.settimeout(0.2)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+
+    try:
+        assert wait_for(listening, timeout=20), "the HTTP demo server did not start"
+        yield f"http://127.0.0.1:{port}/mcp"
+    finally:
+        process.kill()
+        process.wait(10)
+
+
+@pytest.fixture
+def fake_http():
+    servers: list[FakeHttpServer] = []
+
+    def make(mode: str) -> FakeHttpServer:
+        servers.append(FakeHttpServer(mode))
+        return servers[-1]
+
+    yield make
+    for server in servers:
+        server.stop()
+
+
+def http_config(url: str, **settings) -> McpServerConfig:
+    return McpServerConfig.model_validate({"url": url, **settings})
+
+
+def start_failing(runtime, config, secrets=()):
+    connection = ServerConnection("remote", config, secrets=secrets)
+    with pytest.raises(BaseException) as info:
+        runtime.run(connection.start(), timeout=30)
+    return connection, info.value
+
+
+def test_connect_by_url_lists_tools_and_calls_one(runtime, connect, http_demo):
+    connection, tools = connect(http_config(http_demo))
+    assert "echo" in {tool.name for tool in tools}
+    assert call(runtime, connection, "echo", {"text": "over http"}).content[0].text == "over http"
+
+
+def test_configured_header_is_sent_with_every_request(runtime, fake_http):
+    server = fake_http("401")
+    start_failing(runtime, http_config(server.url, headers={"Authorization": "Bearer abc"}))
+    assert server.requests
+    assert all(request.get("authorization") == "Bearer abc" for request in server.requests)
+
+
+def test_401_is_reported_as_rejected_authentication_without_the_token(runtime, fake_http):
+    server = fake_http("401")
+    token = "tok-secret-123"
+    config = http_config(server.url, headers={"Authorization": f"Bearer {token}"})
+    connection, error = start_failing(runtime, config, secrets=[token])
+    reason = connection.describe_failure(error)
+    assert reason == "authentication rejected (HTTP 401)"
+    assert token not in reason
+
+
+def test_server_error_status_is_part_of_the_reason(runtime, fake_http):
+    connection, error = start_failing(runtime, http_config(fake_http("500").url))
+    assert "HTTP 500" in connection.describe_failure(error)
+
+
+def test_closed_port_fails_with_a_connection_reason(runtime):
+    connection, error = start_failing(runtime, http_config(f"http://127.0.0.1:{free_port()}/mcp"))
+    assert connection.describe_failure(error).startswith("cannot connect")
+
+
+def test_response_that_is_not_mcp_fails_with_a_readable_reason(runtime, fake_http):
+    connection, error = start_failing(runtime, http_config(fake_http("html").url))
+    assert "Unexpected content type: text/html" in connection.describe_failure(error)
+
+
+def test_hanging_server_fails_within_the_startup_timeout(runtime, fake_http):
+    started = time.monotonic()
+    config = http_config(fake_http("hang").url, startup_timeout=1)
+    connection, error = start_failing(runtime, config)
+    assert isinstance(error, TimeoutError)
+    assert time.monotonic() - started < 6
+    assert connection.describe_failure(error) == "timed out after 1 s"
+
+
+def test_describe_failure_unwraps_a_nested_exception_group():
+    error = ExceptionGroup("outer", [ExceptionGroup("inner", [ValueError("the real reason")])])
+    assert describe_failure(error) == "ValueError: the real reason"
+
+
+def test_describe_failure_cuts_long_messages_and_hides_secrets():
+    message = "s3cret-value " + "x" * 1000
+    reason = describe_failure(RuntimeError(message), secrets=["s3cret-value"])
+    assert "s3cret-value" not in reason
+    assert "***" in reason
+    assert len(reason) < 260
+
+
+def test_describe_failure_names_the_command_that_was_not_found():
+    reason = describe_failure(FileNotFoundError(2, "nope"), command="does-not-exist")
+    assert reason == "command 'does-not-exist' not found"
+
+
+def test_the_http_client_is_closed_with_the_connection(http_demo):
+    code = """
+import gc, sys
+from nar.config import McpServerConfig
+from nar.mcp.connection import ServerConnection
+from nar.mcp.runtime import McpRuntime
+runtime = McpRuntime()
+connection = ServerConnection('r', McpServerConfig(url=sys.argv[1]))
+runtime.run(connection.start(), timeout=30)
+runtime.run(connection.close(5), timeout=20)
+runtime.stop(5)
+gc.collect()
+"""
+    done = subprocess.run(
+        [sys.executable, "-W", "error::ResourceWarning", "-c", code, http_demo],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "ResourceWarning" not in done.stderr

@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
 import anyio
+import httpx2
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
 from mcp_types import CONNECTION_CLOSED, CallToolResult
 
@@ -25,6 +27,10 @@ from nar.config.paths import mcp_log_dir
 from nar.mcp.types import CLOSE_GRACE_SECONDS, ServerGone, ToolSpec
 
 MAX_TOOL_PAGES = 100
+MAX_REASON_CHARS = 200
+HTTP_TIMEOUT_SECONDS = 30.0
+# A response stream may stay open for a long time, so reads wait longer than other operations.
+HTTP_READ_TIMEOUT_SECONDS = 300.0
 
 
 class _TappedReadStream:
@@ -95,10 +101,18 @@ class ServerConnection:
     ``config`` must already have its ``${VAR}`` references expanded.
     """
 
-    def __init__(self, name: str, config: McpServerConfig, log_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        config: McpServerConfig,
+        log_path: Path | None = None,
+        secrets: Sequence[str] = (),
+    ) -> None:
         self.name = name
         self.config = config
         self.log_path = log_path
+        self.secrets = tuple(secrets)
+        self.http_status: int | None = None  # last error status the server answered
         self._task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[list[ToolSpec]] | None = None
         self._stop = asyncio.Event()
@@ -184,19 +198,94 @@ class ServerConnection:
         finally:
             self._client = None
 
+    async def _note_status(self, response: httpx2.Response) -> None:
+        # The SDK's errors do not carry the HTTP status, so remember it for the failure reason.
+        if response.status_code >= 400:
+            self.http_status = response.status_code
+
+    def describe_failure(self, error: BaseException) -> str:
+        """A short reason for a failed ``start`` of this connection."""
+        return describe_failure(
+            error,
+            self.secrets,
+            command=self.config.command,
+            http_status=self.http_status,
+            timeout=self.config.startup_timeout,
+        )
+
     async def _open_transport(self, stack: AsyncExitStack) -> Any:
         config = self.config
+        if config.url is not None:
+            timeout = httpx2.Timeout(HTTP_TIMEOUT_SECONDS, read=HTTP_READ_TIMEOUT_SECONDS)
+            http_client = httpx2.AsyncClient(
+                headers=config.headers,
+                timeout=timeout,
+                event_hooks={"response": [self._note_status]},
+            )
+            await stack.enter_async_context(http_client)
+            return streamable_http_client(config.url, http_client=http_client)
         assert config.command is not None
         errlog = None
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            errlog = stack.enter_context(
-                open(self.log_path, "w", encoding="utf-8", errors="replace")
-            )
+            log = open(self.log_path, "w", encoding="utf-8", errors="replace")
+            errlog = stack.enter_context(log)
         params = StdioServerParameters(command=config.command, args=config.args, env=config.env)
         if errlog is None:
             return stdio_client(params)
         return stdio_client(params, errlog=errlog)
+
+
+def first_leaf(error: BaseException) -> BaseException:
+    """The first real error inside the nested ``ExceptionGroup`` objects of the SDK task groups."""
+    while isinstance(error, BaseExceptionGroup) and error.exceptions:
+        error = error.exceptions[0]
+    return error
+
+
+def describe_failure(
+    error: BaseException,
+    secrets: Sequence[str] = (),
+    *,
+    command: str | None = None,
+    http_status: int | None = None,
+    timeout: float | None = None,
+) -> str:
+    """One short line saying why a server could not be used.
+
+    Never contains header or environment values: every string in ``secrets`` is replaced
+    by ``***`` and the text is cut at ``MAX_REASON_CHARS`` characters.
+    """
+    leaf = first_leaf(error)
+    if isinstance(leaf, FileNotFoundError):
+        reason = f"command '{command or leaf.filename}' not found"
+    elif isinstance(leaf, TimeoutError):
+        reason = f"timed out after {timeout:g} s" if timeout else "timed out"
+    elif http_status in (401, 403):
+        reason = f"authentication rejected (HTTP {http_status})"
+    elif isinstance(leaf, httpx2.ConnectError | httpx2.ConnectTimeout):
+        reason = f"cannot connect: {_cut(str(leaf))}"
+    elif isinstance(leaf, MCPError) and leaf.code == CONNECTION_CLOSED:
+        reason = "the server closed the connection"
+    elif http_status is not None:
+        reason = f"the server answered HTTP {http_status}: {_cut(_message(leaf))}"
+    elif isinstance(leaf, MCPError):
+        reason = f"MCP error: {_cut(leaf.message)}"
+    else:
+        reason = f"{type(leaf).__name__}: {_cut(_message(leaf))}"
+    for secret in secrets:
+        if secret:
+            reason = reason.replace(secret, "***")
+    return reason
+
+
+def _message(error: BaseException) -> str:
+    return str(error) or "no details"
+
+
+def _cut(text: str) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= MAX_REASON_CHARS else text[:MAX_REASON_CHARS] + "..."
 
 
 def log_path_for(server: str) -> Path:
