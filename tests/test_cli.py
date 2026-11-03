@@ -13,7 +13,8 @@ from mcp_support import FIXTURE, read_pid, wait_until_gone
 from nar import __version__
 from nar.cli import main
 from nar.errors import NarError, ProviderError
-from nar.providers import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
+from nar.providers import LLMResponse, Message, ResponseDone, StopReason, TextDelta, ToolCall
+from nar.providers.base import LLMProvider
 from nar.providers.retry import RetryNotice
 
 # `nar.cli.main` the attribute is the function; fetch the module explicitly.
@@ -51,6 +52,7 @@ class FakeProvider:
     """
 
     name = "fake"
+    complete = LLMProvider.complete  # the summary of a compaction
 
     def __init__(self):
         self.model = "fake-model"
@@ -432,6 +434,50 @@ def test_repl_provider_error_keeps_the_session(runner, fake_provider):
     assert "error: openrouter failed after 4 attempts: 503" in result.stderr
     assert "Hello there" in result.stdout
     assert [m.content for m in fake_provider.requests[1]] == ["second"]
+
+
+def test_repl_shows_the_context_usage_on_stderr_only(runner, fake_provider):
+    result = runner.invoke(main, [], input="first\nexit\n")
+    assert result.exit_code == 0
+    assert "/ 128,000 tokens (" in result.stderr
+    assert "context:" not in result.stdout
+
+
+def test_repl_shows_the_context_usage_after_a_failed_request(runner, fake_provider):
+    fake_provider.script = [KeyboardInterrupt()]
+    result = runner.invoke(main, [], input="first\nexit\n")
+    assert "cancelled" in result.stderr
+    assert "128,000 tokens" in result.stderr
+
+
+def test_single_mode_does_not_show_the_context_usage(runner, fake_provider):
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 0
+    assert "context:" not in result.output
+
+
+def test_repl_session_keeps_working_past_the_context_window(runner, workdir, fake_provider):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text(
+        "context_window = 2000\ncontext_threshold = 50\n", encoding="utf-8"
+    )
+    fake_provider.script = [LLMResponse("a" * 8000), LLMResponse("the summary"), LLMResponse("ok")]
+    result = runner.invoke(main, [], input=f"{'u' * 8000}\nwhat did I ask?\nexit\n")
+    assert result.exit_code == 0
+    assert "context: compacted (" in result.stderr
+    summary_call, follow_up = fake_provider.requests[1:3]
+    assert "<transcript>" in summary_call[0].content
+    assert "the summary" in follow_up[0].content
+    assert follow_up[-1] == Message.user("what did I ask?")
+    assert "ok" in result.stdout
+
+
+def test_repl_compact_command_calls_the_model_for_a_summary(runner, fake_provider):
+    fake_provider.script = [LLMResponse("x" * 400), LLMResponse("the summary")]
+    result = runner.invoke(main, [], input=f"{'u' * 400}\n/compact\nexit\n")
+    assert result.exit_code == 0
+    assert "context: compacted (" in result.stderr
+    assert "<transcript>" in fake_provider.requests[1][0].content
 
 
 def test_repl_missing_key_fails_at_startup(runner, workdir):

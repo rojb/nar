@@ -3,8 +3,16 @@ import io
 import pytest
 from rich.console import Console
 
+from nar.agent import Agent
 from nar.cli import slash
+from nar.context.compaction import SUMMARY_HEADER, Compactor, ContextLimits
+from nar.context.manager import ContextManager
+from nar.errors import ProviderError
 from nar.mcp.manager import ServerStatus
+from nar.providers.base import LLMProvider
+from nar.providers.messages import LLMResponse, Message, ResponseDone
+from nar.tools.registry import ToolRegistry
+from nar.ui.agent_view import AgentView
 
 
 class FakeManager:
@@ -23,6 +31,37 @@ def make_context(manager):
         Console(file=err, width=100, force_terminal=False),
     )
     return context, out, err
+
+
+class SummaryProvider(LLMProvider):
+    name = "scripted"
+
+    def __init__(self, answer):
+        super().__init__("scripted-model")
+        self.answer = answer
+        self.calls = 0
+
+    def stream(self, messages, *, system=None, tools=(), max_tokens=100):
+        self.calls += 1
+        if isinstance(self.answer, BaseException):
+            raise self.answer
+        yield ResponseDone(LLMResponse(self.answer))
+
+
+HISTORY = (Message.user("u" * 8000), Message.assistant("a" * 8000))
+
+
+def compact_context(answer, *messages):
+    """A command context with an agent whose conversation holds ``messages``."""
+    provider = SummaryProvider(answer)
+    conversation = ContextManager("system")
+    conversation.replace_messages(messages)
+    limits = ContextLimits(128_000)
+    agent = Agent(provider, ToolRegistry(), conversation, compactor=Compactor(provider, limits))
+    context, out, err = make_context(None)
+    context.agent = agent
+    context.view = AgentView(context.console, context.err)
+    return context, provider, conversation, err
 
 
 @pytest.mark.parametrize(
@@ -55,7 +94,7 @@ def test_a_line_that_is_not_a_command_is_left_to_the_model():
 def test_unknown_command_prints_an_error_listing_the_commands():
     context, out, err = make_context(None)
     assert slash.dispatch("/foo", context) is True
-    assert err.getvalue().strip() == "error: /foo is not a command; available: /mcp"
+    assert err.getvalue().strip() == "error: /foo is not a command; available: /mcp, /compact"
     assert out.getvalue() == ""
 
 
@@ -118,4 +157,43 @@ def test_registered_commands_can_be_added_and_receive_their_argument(monkeypatch
     assert slash.dispatch("/echo hello there", context) is True
     assert seen == ["hello there"]
     slash.dispatch("/nope", context)
-    assert "/mcp, /echo" in err.getvalue()
+    assert "/mcp, /compact, /echo" in err.getvalue()
+
+
+def test_compact_replaces_the_history_and_shows_the_sizes():
+    context, provider, conversation, err = compact_context("the summary", *HISTORY)
+    assert slash.dispatch("/compact", context) is True
+    assert provider.calls == 1
+    assert conversation.messages[0].content.startswith(SUMMARY_HEADER)
+    assert "context: compacted (" in err.getvalue()
+    assert "/ 128,000 tokens (" in err.getvalue()
+
+
+def test_compact_with_an_empty_conversation_does_not_call_the_model():
+    context, provider, _, err = compact_context("the summary")
+    assert slash.dispatch("/compact", context) is True
+    assert provider.calls == 0
+    assert "there is nothing to compact" in err.getvalue()
+
+
+def test_compact_does_not_take_arguments():
+    context, provider, conversation, err = compact_context("the summary", *HISTORY)
+    assert slash.dispatch("/compact everything", context) is True
+    assert provider.calls == 0
+    assert conversation.messages == HISTORY
+    assert "/compact does not take arguments" in err.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("answer", "shown"),
+    [
+        (ProviderError("the provider failed", "scripted"), "error: the provider failed"),
+        ("", "error: the model returned an empty summary"),
+        (KeyboardInterrupt(), "cancelled"),
+    ],
+)
+def test_a_failed_compact_keeps_the_history_and_the_session(answer, shown):
+    context, _, conversation, err = compact_context(answer, *HISTORY)
+    assert slash.dispatch("/compact", context) is True
+    assert conversation.messages == HISTORY
+    assert shown in err.getvalue()

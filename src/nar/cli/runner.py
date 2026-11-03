@@ -11,10 +11,19 @@ from contextlib import closing, contextmanager
 from enum import StrEnum
 from pathlib import Path
 
-from nar.agent import Agent, TurnLimitReached, approval_gate, build_system_prompt
+from nar.agent import (
+    Agent,
+    CompactionStarted,
+    ContextCompacted,
+    TurnLimitReached,
+    approval_gate,
+    build_system_prompt,
+)
 from nar.config import NarConfig
 from nar.context import ProjectInstructions
+from nar.context.compaction import CompactionError, Compactor, ContextLimits
 from nar.context.manager import ContextManager
+from nar.errors import ProviderError
 from nar.mcp import McpManager
 from nar.providers import factory
 from nar.tools import create_default_registry
@@ -40,12 +49,14 @@ def create_agent(
     context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
     registry = create_default_registry(cwd)
     prompter = TerminalPrompter(view.tools)
+    limits = ContextLimits(config.context_window, config.context_threshold)
     return Agent(
         provider,
         registry,
         context,
         max_turns=config.max_turns,
         gate=approval_gate(config.approval, prompter, registry.context),
+        compactor=Compactor(provider, limits),
     )
 
 
@@ -78,6 +89,30 @@ def run_request(agent: Agent, view: AgentView, prompt: str) -> Outcome:
     finally:
         view.finish()
     return outcome
+
+
+def show_context_usage(agent: Agent, view: AgentView) -> None:
+    view.context_usage(agent.context.token_count(), agent.compactor.limits.window)
+
+
+def compact_now(agent: Agent, view: AgentView) -> None:
+    """``/compact``: any failure or Ctrl+C is shown, and the history stays as it was."""
+    if not agent.context.messages:
+        view.note("context: there is nothing to compact")
+        return
+    before = agent.context.token_count()
+    view.handle(CompactionStarted())
+    try:
+        agent.compactor.compact(agent.context)
+    except KeyboardInterrupt:
+        view.cancelled()
+    except (CompactionError, ProviderError) as exc:
+        view.error(exc.message)
+    else:
+        view.handle(ContextCompacted(before, agent.context.token_count()))
+    finally:
+        view.finish()
+    show_context_usage(agent, view)
 
 
 def _saved_memory(view: AgentView) -> dict[str, str]:

@@ -21,7 +21,7 @@ def run(config: NarConfig, instructions: ProjectInstructions | None = None) -> N
     """
     # Imported here: the provider SDKs are slow to import.
     from nar.cli import slash
-    from nar.cli.runner import connect_mcp, create_agent, run_request
+    from nar.cli.runner import connect_mcp, create_agent, run_request, show_context_usage
     from nar.ui.agent_view import AgentView
 
     if instructions is not None:
@@ -30,7 +30,7 @@ def run(config: NarConfig, instructions: ProjectInstructions | None = None) -> N
     agent = create_agent(config, Path.cwd(), instructions, view)  # a missing key stops here
     with connect_mcp(config, agent, view) as mcp:
         click.echo(f"nar · {agent.provider.name} · {agent.provider.model}. Type 'exit' to leave.")
-        commands = slash.SlashContext(mcp, view.out, view.err)
+        commands = slash.SlashContext(mcp, view.out, view.err, agent, view)
         while True:
             try:
                 line = input(PROMPT)
@@ -50,3 +50,4 @@ def run(config: NarConfig, instructions: ProjectInstructions | None = None) -> N
                 view.cancelled()
             except ProviderError as exc:
                 view.error(exc.message)
+            show_context_usage(agent, view)

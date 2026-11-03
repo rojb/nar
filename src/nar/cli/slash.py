@@ -1,4 +1,4 @@
-"""Slash commands of interactive mode (``/mcp``).
+"""Slash commands of interactive mode (``/mcp``, ``/compact``).
 
 A deliberately small table: later changes replace ``parse_slash`` and ``dispatch`` with a
 fuller router (completion, ``/help``, ...) and keep ``register_command`` as the way a
@@ -10,12 +10,17 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.text import Text
 
 from nar.mcp.manager import McpManager
 from nar.ui.mcp_view import render_mcp_status
+
+if TYPE_CHECKING:
+    from nar.agent import Agent
+    from nar.ui.agent_view import AgentView
 
 # "/" + a name (a letter, then letters, digits or "-") + nothing or whitespace and an argument.
 # A path such as /etc/hosts does not match, so it still goes to the model.
@@ -24,11 +29,13 @@ _COMMAND = re.compile(r"^/([A-Za-z][A-Za-z0-9-]*)(?:\s+(.*))?$")
 
 @dataclass
 class SlashContext:
-    """What a command may use: the MCP manager and the two terminal streams."""
+    """What a command may use: the MCP manager, the terminal streams, the agent and its view."""
 
     mcp: McpManager | None
     console: Console  # standard output: the command's answer
     err: Console  # standard error: problems
+    agent: Agent | None = None
+    view: AgentView | None = None
 
 
 Handler = Callable[[SlashContext, str], None]
@@ -73,4 +80,19 @@ def _mcp_command(context: SlashContext, argument: str) -> None:
     render_mcp_status(statuses, context.console, only=argument or None, err=context.err)
 
 
+def _compact_command(context: SlashContext, argument: str) -> None:
+    if argument:
+        context.err.print(
+            Text("error: /compact does not take arguments", "red"),
+            highlight=False,
+            soft_wrap=True,
+        )
+        return
+    # Imported here: the runner pulls in the provider SDKs.
+    from nar.cli.runner import compact_now
+
+    compact_now(context.agent, context.view)
+
+
 register_command("mcp", _mcp_command, "show the MCP servers and their tools")
+register_command("compact", _compact_command, "summarize the conversation to free context")
