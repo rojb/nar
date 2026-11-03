@@ -3,7 +3,7 @@
 `nar` is a CLI coding agent written in Python. It talks to a model (Anthropic, OpenRouter, DeepSeek or a
 local Ollama), lets it call tools (for now `read_file`) in a loop until it has an answer, and keeps
 the conversation in interactive mode, reducing it when it gets too long. It asks before it edits
-files or runs commands. More tools and sessions arrive in later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
+files or runs commands, and saves each conversation so you can continue it later. More tools arrive in later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
 
 ## Requirements
 
@@ -42,14 +42,16 @@ nar                      # interactive mode: one conversation, type "exit" to le
 nar "explain this repo"  # single mode: runs the agent on one prompt and exits
 nar --provider ollama --model qwen2.5-coder "hello"   # choose provider/model for this run
 nar --approval auto-edit "add a docstring to main.py"  # edit project files without asking
+nar --resume             # continue the latest session of this folder
+nar --resume 20261103 "and now?"  # continue that session with one prompt and exit
 nar --version
 nar --help
 nar --show-config        # print the effective configuration and where each value comes from
 ```
 
 In interactive mode, empty lines are ignored; `exit`, end-of-input (Ctrl+D, or Ctrl+Z then Enter
-on Windows) and Ctrl+C at the prompt end the session with exit code 0. A line such as `/mcp` or `/compact` is a
-command and is not sent to the model (see "MCP servers" and "Long conversations"); a path such as `/etc/hosts` is not a
+on Windows) and Ctrl+C at the prompt end the session with exit code 0. A line such as `/mcp`, `/compact` or `/sessions` is a
+command and is not sent to the model (see "MCP servers", "Long conversations" and "Sessions"); a path such as `/etc/hosts` is not a
 command and is sent as a request.
 
 ## How the agent works
@@ -208,6 +210,36 @@ per provider. Set it in `.nar/config.toml` to match your model:
 
 With Ollama, raise it only if the server also uses a larger context (`OLLAMA_CONTEXT_LENGTH`):
 beyond its real context Ollama drops the oldest text without any error.
+
+## Sessions
+
+Each conversation is saved automatically, in interactive and in single mode, to
+`~/.nar/sessions/<id>.json` (or under `NAR_HOME`): before each model call and when each request
+ends. If the terminal closes, you lose at most the turn in progress. A cancelled request leaves no
+trace, and a run where nothing was sent creates no file.
+
+| Command | What it does |
+|---|---|
+| `nar --resume` | Continue the latest session of the current folder |
+| `nar --resume <id>` | Continue that session; the beginning of the id is enough if only one matches |
+| `nar --resume <id> "prompt"` | The same, with one prompt, and exit |
+| `/sessions` | In interactive mode: list the saved sessions (the current one has a `*`) |
+| `/resume [id]` | In interactive mode: save this session and switch to that one, or to the latest other session of this folder |
+
+`--resume` reads the next word as an id, so `nar --resume "a prompt"` fails with `no session`; to
+continue the latest session with a prompt, start `nar --resume` and type it.
+
+When you resume, the earlier requests, answers and tool calls are shown (the last 20 messages, on
+standard error) and the conversation continues. The system prompt is built again for the current
+folder, and the provider and model come from your current configuration. A session resumed in
+another folder shows a warning, tools run in the current folder, and the session then belongs to
+it. "Always allow" answers are not restored, so `nar` asks again, and the `todos` list is not
+saved. If two `nar` processes use the same session, the last save wins.
+
+**Session files hold the whole conversation in plain text, including file contents and command
+output, which can include secrets.** On Linux and macOS only you can read them; on Windows they
+rely on the permissions of your user folder. `nar` never removes them: delete the files you no
+longer want. If a session cannot be saved, `nar` warns and keeps working.
 
 ## Providers
 

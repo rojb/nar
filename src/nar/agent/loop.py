@@ -87,13 +87,17 @@ class Agent:
             if not completed:
                 self.context.rollback(mark)
 
+    def measure_tools(self) -> None:
+        """Count the tool definitions, which the history does not show, in the context size."""
+        self.context.overhead_tokens = estimate_tokens(json.dumps(self.registry.definitions()))
+
     def _manage_context(self, prompt: str) -> Iterator[AgentEvent]:
         """Before a model call: over the limit, prune first and summarize only if needed."""
         compactor = self.compactor
         if compactor is None:
             return
         context = self.context
-        context.overhead_tokens = estimate_tokens(json.dumps(self.registry.definitions()))
+        self.measure_tools()
         if not compactor.over_limit(context):
             return
         before = context.token_count()

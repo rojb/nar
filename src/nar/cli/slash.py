@@ -1,4 +1,4 @@
-"""Slash commands of interactive mode (``/mcp``, ``/compact``).
+"""Slash commands of interactive mode (``/mcp``, ``/compact``, ``/sessions``, ``/resume``).
 
 A deliberately small table: later changes replace ``parse_slash`` and ``dispatch`` with a
 fuller router (completion, ``/help``, ...) and keep ``register_command`` as the way a
@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -20,6 +21,7 @@ from nar.ui.mcp_view import render_mcp_status
 
 if TYPE_CHECKING:
     from nar.agent import Agent
+    from nar.session import SessionRecorder
     from nar.ui.agent_view import AgentView
 
 # "/" + a name (a letter, then letters, digits or "-") + nothing or whitespace and an argument.
@@ -36,6 +38,7 @@ class SlashContext:
     err: Console  # standard error: problems
     agent: Agent | None = None
     view: AgentView | None = None
+    recorder: SessionRecorder | None = None
 
 
 Handler = Callable[[SlashContext, str], None]
@@ -91,8 +94,44 @@ def _compact_command(context: SlashContext, argument: str) -> None:
     # Imported here: the runner pulls in the provider SDKs.
     from nar.cli.runner import compact_now
 
-    compact_now(context.agent, context.view)
+    compact_now(context.agent, context.view, context.recorder)
+
+
+def _sessions_command(context: SlashContext, argument: str) -> None:
+    from nar.ui.session_view import render_sessions
+
+    recorder = context.recorder
+    sessions, invalid = recorder.store.list()
+    render_sessions(sessions, recorder.session.id, invalid, context.console, context.err)
+
+
+def _resume_command(context: SlashContext, argument: str) -> None:
+    # Imported here: the runner pulls in the provider SDKs.
+    from nar.cli.runner import continue_session, show_context_usage
+    from nar.errors import NarError
+    from nar.ui.session_view import render_history
+
+    recorder, view = context.recorder, context.view
+    cwd = Path.cwd()
+    try:
+        session = (
+            recorder.store.find(argument)
+            if argument
+            else recorder.store.latest(cwd, exclude=recorder.session.id)
+        )
+    except NarError as exc:
+        view.error(exc.message)
+        return
+    if session is None:
+        view.error(f"there is no other saved session in {cwd}")
+        return
+    recorder.save()
+    continue_session(context.agent, view, recorder, session, cwd)
+    render_history(context.agent.context.messages, view.err)
+    show_context_usage(context.agent, view)
 
 
 register_command("mcp", _mcp_command, "show the MCP servers and their tools")
 register_command("compact", _compact_command, "summarize the conversation to free context")
+register_command("sessions", _sessions_command, "list the saved sessions")
+register_command("resume", _resume_command, "continue a saved session: /resume [id]")
