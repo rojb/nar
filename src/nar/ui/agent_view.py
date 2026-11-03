@@ -66,8 +66,11 @@ class AgentView:
             )
         elif isinstance(event, ContextPruned):
             self._close_line()
+            done = [f"removed {event.count} old tool results"] if event.count else []
+            if event.shortened:
+                done.append(f"shortened {event.shortened} new tool results")
             self.note(
-                f"context: removed {event.count} old tool results "
+                f"context: {' and '.join(done)} "
                 f"({event.tokens_before:,} -> {event.tokens_after:,} tokens)"
             )
         elif isinstance(event, ContextCompacted):

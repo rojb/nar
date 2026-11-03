@@ -21,7 +21,7 @@ from nar.agent.events import (
 )
 from nar.context.compaction import CompactionError, Compactor
 from nar.context.manager import ContextManager, estimate_tokens
-from nar.context.pruning import prune_tool_results
+from nar.context.pruning import prune_tool_results, shorten_unseen_results
 from nar.errors import ProviderError
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
@@ -97,10 +97,12 @@ class Agent:
         if not compactor.over_limit(context):
             return
         before = context.token_count()
-        messages, pruned = prune_tool_results(context.messages, compactor.limits.keep_tokens)
-        if pruned:
+        limits = compactor.limits
+        messages, pruned = prune_tool_results(context.messages, limits.keep_tokens)
+        messages, shortened = shorten_unseen_results(messages, limits.unseen_tokens)
+        if pruned or shortened:
             context.replace_messages(messages)
-            yield ContextPruned(pruned, before, context.token_count())
+            yield ContextPruned(pruned, before, context.token_count(), shortened)
             if not compactor.over_limit(context):
                 return
         if not compactor.worth_compacting(context, prompt):

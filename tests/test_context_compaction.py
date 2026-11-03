@@ -93,6 +93,19 @@ def test_a_big_system_prompt_does_not_make_a_short_conversation_impossible_to_co
     assert context.messages[1:] == (Message.assistant("a" * 400),)
 
 
+def test_a_seen_tool_result_does_not_start_the_kept_part():
+    call = ToolCall("c1", "write_file", {"content": "c" * 2000})
+    context = conversation(
+        Message.user("u" * 4000),
+        Message.assistant("", [call]),
+        Message.tool_result("c1", "r" * 200),
+        Message.assistant("done"),
+    )
+    compactor(window=1200).compact(context)
+    assert [m.role for m in context.messages] == ["user", "assistant"]
+    assert context.messages[1].content == "done"
+
+
 def test_the_kept_part_never_starts_with_a_tool_result():
     call = ToolCall("c1", "write_file", {"content": "c" * 2000})
     context = conversation(
@@ -102,7 +115,8 @@ def test_the_kept_part_never_starts_with_a_tool_result():
     )
     # the tool result alone fits in the budget, but its call does not
     compactor(window=1200).compact(context)
-    assert [m.role for m in context.messages] == ["user"]
+    # ... and the model has not seen that result, so both are kept
+    assert [m.role for m in context.messages] == ["user", "assistant", "tool"]
     assert context.messages[0].content.startswith(SUMMARY_HEADER)
 
 

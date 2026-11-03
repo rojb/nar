@@ -45,11 +45,12 @@ class RequestFinished:
 
 @dataclass(frozen=True)
 class ContextPruned:
-    """Old tool results were replaced with a marker to make room."""
+    """Old tool results were replaced with a marker, or new ones cut, to make room."""
 
     count: int
     tokens_before: int
     tokens_after: int
+    shortened: int = 0
 
 
 @dataclass(frozen=True)

@@ -441,16 +441,33 @@ def test_pruning_alone_makes_no_summary_call():
     assert "removed to save context" in provider.requests[0]["messages"][2].content
 
 
-def test_a_big_result_reaches_the_model_before_it_can_be_pruned():
-    class BigTool(EchoTool):
-        def execute(self, arguments, context):
-            return ToolResult.ok("r" * 20_000)  # over the limit by itself
+class BigTool(EchoTool):
+    def __init__(self, size):
+        super().__init__()
+        self.size = size
 
+    def execute(self, arguments, context):
+        return ToolResult.ok("r" * self.size)
+
+
+def test_a_big_result_reaches_the_model_complete_and_only_older_context_is_reduced():
     provider = ScriptedProvider(echo_call(), LLMResponse("the summary"), LLMResponse("done"))
-    agent = compacting_agent(provider, BigTool(), window=8000)
+    agent = compacting_agent(provider, BigTool(6000), window=5000)  # within half of the window
+    agent.context.replace_messages([Message.user("u" * 11_000), Message.assistant("ok")])
     events = run(agent)
-    assert not [e for e in events if isinstance(e, ContextPruned)]
-    assert provider.requests[-1]["messages"][-1].content == "r" * 20_000
+    assert ContextCompacted in [type(e) for e in events]
+    assert provider.requests[-1]["messages"][-1].content == "r" * 6000
+
+
+def test_a_result_too_big_for_the_context_is_shortened_and_the_model_is_told():
+    provider = ScriptedProvider(echo_call(), LLMResponse("done"))
+    agent = compacting_agent(provider, BigTool(20_000), window=4000)
+    events = run(agent)
+    shortened = [e for e in events if isinstance(e, ContextPruned)]
+    assert [e.shortened for e in shortened] == [1]
+    sent = provider.requests[-1]["messages"][-1].content
+    assert sent.startswith("r" * 8000)
+    assert "request a smaller part" in sent
 
 
 def test_the_tool_definitions_count_towards_the_limit():
@@ -461,12 +478,8 @@ def test_the_tool_definitions_count_towards_the_limit():
 
 
 def test_compaction_between_tool_calls_keeps_the_request_and_a_valid_history():
-    class BigTool(EchoTool):
-        def execute(self, arguments, context):
-            return ToolResult.ok("r" * 3000)  # recent enough not to be pruned
-
     provider = ScriptedProvider(echo_call(), LLMResponse("the summary"), LLMResponse("done"))
-    agent = compacting_agent(provider, BigTool())
+    agent = compacting_agent(provider, BigTool(3000))
     agent.context.replace_messages([Message.user("u" * 11_000), Message.assistant("ok")])
     prompt = "fix the bug " + "p" * 1000  # under the limit (3,200) until the tool answers
     events = run(agent, prompt)

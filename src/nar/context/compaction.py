@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from nar.context.manager import CHARS_PER_TOKEN, ContextManager, estimate_messages
+from nar.context.pruning import unseen_start
 from nar.errors import NarError
 from nar.providers.base import LLMProvider
 from nar.providers.messages import Message
@@ -59,6 +60,11 @@ class ContextLimits:
     def keep_tokens(self) -> int:
         """Tokens of the most recent content that pruning and compaction leave complete."""
         return self.window // 4
+
+    @property
+    def unseen_tokens(self) -> int:
+        """Most tokens that results the model has not seen yet may take together."""
+        return self.window // 2
 
     @property
     def minimum_compaction_tokens(self) -> int:
@@ -141,7 +147,11 @@ def render_transcript(messages: Sequence[Message]) -> str:
 
 
 def _tail_start(messages: Sequence[Message], keep_tokens: int) -> int:
-    """Index of the earliest non-tool message whose tail fits in ``keep_tokens``."""
+    """Index of the earliest non-tool message whose tail fits in ``keep_tokens``.
+
+    Results the model has not seen, and the call they answer, are always in the tail: in a
+    summary they would be cut, and the model would only repeat the call.
+    """
     start = len(messages)
     total = 0
     for index in range(len(messages) - 1, -1, -1):
@@ -150,7 +160,7 @@ def _tail_start(messages: Sequence[Message], keep_tokens: int) -> int:
             break
         if messages[index].role != "tool":
             start = index
-    return start
+    return min(start, unseen_start(messages))
 
 
 def _cut(text: str, limit: int) -> str:

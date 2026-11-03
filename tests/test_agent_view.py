@@ -152,6 +152,13 @@ def test_context_events_go_to_stderr_only():
     assert "continuing with the full history" in text
 
 
+def test_shortened_results_are_shown():
+    view, _, err = make_view()
+    play(view, ContextPruned(0, 5000, 2000, shortened=1), ContextPruned(2, 9, 8, shortened=1))
+    assert "context: shortened 1 new tool results (5,000 -> 2,000 tokens)" in err.getvalue()
+    assert "removed 2 old tool results and shortened 1 new tool results" in err.getvalue()
+
+
 def test_context_events_end_an_open_answer_line():
     view, out, err = make_view()
     play(view, TextDelta("partial"), ContextPruned(1, 10, 5))
