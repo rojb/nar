@@ -1,4 +1,4 @@
-from nar.context.pruning import prune_tool_results
+from nar.context.pruning import prune_tool_results, shorten_unseen_results, unseen_start
 from nar.providers.messages import Message, ToolCall
 
 MARKER = "[result of read_file removed to save context; call the tool again if you need it]"
@@ -73,3 +73,40 @@ def test_a_result_without_a_known_call_still_gets_a_marker():
     pruned, count = prune_tool_results(messages, keep_tokens=0)
     assert count == 1
     assert "the tool" in pruned[0].content
+
+
+def test_unseen_start_finds_the_answering_assistant_message():
+    messages = exchange("1", "a")
+    assert unseen_start(messages) == 0
+    assert unseen_start([*messages, Message.assistant("seen")]) == 3
+    assert unseen_start([Message.user("hi")]) == 1
+
+
+def test_big_unseen_results_are_shortened_with_a_note():
+    messages = [*exchange("1", "a" * 8000)]
+    shortened, count = shorten_unseen_results(messages, budget_tokens=500)
+    assert count == 1
+    assert shortened[1].content.startswith("a" * 2000 + "\n[result cut to fit the context")
+    assert "6000 characters omitted" in shortened[1].content
+    assert shortened[1].tool_call_id == "1"
+
+
+def test_the_budget_is_shared_between_unseen_results():
+    calls = [ToolCall("1", "read_file", {}), ToolCall("2", "read_file", {})]
+    messages = [
+        Message.assistant("", calls),
+        Message.tool_result("1", "a" * 4000),
+        Message.tool_result("2", "b" * 100),
+    ]
+    shortened, count = shorten_unseen_results(messages, budget_tokens=500)
+    assert count == 1
+    assert "a" * 1000 in shortened[1].content
+    assert "a" * 1001 not in shortened[1].content
+    assert shortened[2].content == "b" * 100
+
+
+def test_seen_results_are_not_shortened():
+    messages = [*exchange("1", "a" * 8000), Message.assistant("seen")]
+    shortened, count = shorten_unseen_results(messages, budget_tokens=10)
+    assert count == 0
+    assert shortened == tuple(messages)
