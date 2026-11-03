@@ -17,19 +17,25 @@ def prune_tool_results(
 ) -> tuple[tuple[Message, ...], int]:
     """Return the messages with old tool results pruned, and how many were pruned.
 
-    Walking from the newest result, the ones that fit in ``keep_tokens`` stay. Calls and
-    their results stay paired, so the history is still valid for the providers.
+    Results after the last assistant message always stay: the model has not seen them yet,
+    and removing them would only make it call the tool again. Then, walking from the newest
+    result, the ones that fit in ``keep_tokens`` stay. Calls and their results stay paired, so
+    the history is still valid for the providers.
     """
     tool_names = {call.id: call.name for message in messages for call in message.tool_calls}
     pruned = list(messages)
     count = 0
     kept_tokens = 0
     budget_open = True
+    seen_by_model = False
     for index in range(len(pruned) - 1, -1, -1):
         message = pruned[index]
+        seen_by_model = seen_by_model or message.role == "assistant"
         if message.role != "tool":
             continue
         kept_tokens += estimate_tokens(message.content)
+        if not seen_by_model:
+            continue
         budget_open = budget_open and kept_tokens <= keep_tokens
         if budget_open or len(message.content) <= MIN_PRUNED_CHARS:
             continue

@@ -35,8 +35,24 @@ def test_short_results_and_other_messages_do_not_change():
     assert pruned == tuple(messages)
 
 
+def test_results_the_model_has_not_seen_are_never_pruned():
+    messages = [
+        *exchange("1", "a" * 4000),
+        Message.assistant(
+            "", [ToolCall("2", "read_file", {"path": "b"}), ToolCall("3", "read_file", {})]
+        ),
+        Message.tool_result("2", "b" * 40_000),
+        Message.tool_result("3", "c" * 40_000),
+        Message.user("and now?"),
+    ]
+    pruned, count = prune_tool_results(messages, keep_tokens=0)
+    assert count == 1
+    assert pruned[1].content == MARKER
+    assert pruned[3:] == tuple(messages[3:])
+
+
 def test_pairing_and_error_flag_are_kept():
-    messages = exchange("1", "e" * 4000, is_error=True)
+    messages = [*exchange("1", "e" * 4000, is_error=True), Message.assistant("seen")]
     pruned, _ = prune_tool_results(messages, keep_tokens=0)
     assert pruned[0].tool_calls == messages[0].tool_calls
     assert pruned[1].tool_call_id == "1"
@@ -44,7 +60,7 @@ def test_pairing_and_error_flag_are_kept():
 
 
 def test_pruning_twice_changes_nothing_more():
-    messages = [*exchange("1", "a" * 4000), *exchange("2", "b" * 4000)]
+    messages = [*exchange("1", "a" * 4000), *exchange("2", "b" * 4000), Message.assistant("seen")]
     once, first = prune_tool_results(messages, keep_tokens=0)
     twice, second = prune_tool_results(once, keep_tokens=0)
     assert first == 2
@@ -53,6 +69,7 @@ def test_pruning_twice_changes_nothing_more():
 
 
 def test_a_result_without_a_known_call_still_gets_a_marker():
-    pruned, count = prune_tool_results([Message.tool_result("x", "a" * 4000)], keep_tokens=0)
+    messages = [Message.tool_result("x", "a" * 4000), Message.assistant("seen")]
+    pruned, count = prune_tool_results(messages, keep_tokens=0)
     assert count == 1
     assert "the tool" in pruned[0].content
