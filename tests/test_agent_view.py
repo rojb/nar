@@ -4,6 +4,10 @@ from rich.console import Console
 
 from nar.agent.events import (
     AnswerCutOff,
+    CompactionFailed,
+    CompactionStarted,
+    ContextCompacted,
+    ContextPruned,
     ModelCallStarted,
     RequestFinished,
     ToolCallFinished,
@@ -129,3 +133,56 @@ def test_note_is_a_literal_line_on_stderr():
     view.note("connecting MCP servers: [red]a[/red], b ...")
     assert out.getvalue() == ""
     assert err.getvalue() == "connecting MCP servers: [red]a[/red], b ...\n"
+
+
+def test_context_events_go_to_stderr_only():
+    view, out, err = make_view()
+    play(
+        view,
+        ContextPruned(3, 5000, 2000),
+        CompactionStarted(),
+        ContextCompacted(9000, 1500),
+        CompactionFailed("the model returned an empty summary"),
+    )
+    assert out.getvalue() == ""
+    text = err.getvalue()
+    assert "context: removed 3 old tool results (5,000 -> 2,000 tokens)" in text
+    assert "context: compacted (9,000 -> 1,500 tokens)" in text
+    assert "could not compact the conversation: the model returned an empty summary" in text
+    assert "continuing with the full history" in text
+
+
+def test_shortened_results_are_shown():
+    view, _, err = make_view()
+    play(view, ContextPruned(0, 5000, 2000, shortened=1), ContextPruned(2, 9, 8, shortened=1))
+    assert "context: shortened 1 new tool results (5,000 -> 2,000 tokens)" in err.getvalue()
+    assert "removed 2 old tool results and shortened 1 new tool results" in err.getvalue()
+
+
+def test_context_events_end_an_open_answer_line():
+    view, out, err = make_view()
+    play(view, TextDelta("partial"), ContextPruned(1, 10, 5))
+    assert out.getvalue() == "partial\n"
+
+
+def test_compaction_shows_its_own_waiting_text_and_stops_it():
+    err = io.StringIO()
+    view = AgentView(
+        Console(file=io.StringIO(), force_terminal=False),
+        Console(file=err, force_terminal=True, width=80),
+    )
+    view.handle(CompactionStarted())
+    assert view._status is not None
+    assert "compacting the conversation" in view._status.status
+    view.handle(ContextCompacted(10, 5))
+    assert view._status is None
+    view.handle(ModelCallStarted(1))
+    assert "compacting" not in view._status.status
+    view.finish()
+
+
+def test_context_usage_line():
+    view, out, err = make_view()
+    view.context_usage(12_300, 128_000)
+    assert out.getvalue() == ""
+    assert err.getvalue() == "context: 12,300 / 128,000 tokens (9%)\n"

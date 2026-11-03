@@ -13,6 +13,10 @@ from rich.status import Status
 from nar.agent.events import (
     AgentEvent,
     AnswerCutOff,
+    CompactionFailed,
+    CompactionStarted,
+    ContextCompacted,
+    ContextPruned,
     ModelCallStarted,
     ToolCallFinished,
     ToolCallStarted,
@@ -34,7 +38,11 @@ class AgentView:
 
     def handle(self, event: AgentEvent) -> None:
         if isinstance(event, ModelCallStarted):
-            self._start_waiting()
+            self._start_waiting(self.waiting_text)
+            return
+        if isinstance(event, CompactionStarted):
+            self._close_line()
+            self._start_waiting("compacting the conversation...")
             return
         self._stop_waiting()
         if isinstance(event, TextDelta):
@@ -55,6 +63,24 @@ class AgentView:
             self.warn(
                 f"stopped after {event.max_turns} turns without a final answer; "
                 "raise max_turns in .nar/config.toml to allow more"
+            )
+        elif isinstance(event, ContextPruned):
+            self._close_line()
+            done = [f"removed {event.count} old tool results"] if event.count else []
+            if event.shortened:
+                done.append(f"shortened {event.shortened} new tool results")
+            self.note(
+                f"context: {' and '.join(done)} "
+                f"({event.tokens_before:,} -> {event.tokens_after:,} tokens)"
+            )
+        elif isinstance(event, ContextCompacted):
+            self._close_line()
+            self.compacted(event.tokens_before, event.tokens_after)
+        elif isinstance(event, CompactionFailed):
+            self._close_line()
+            self.warn(
+                f"warning: could not compact the conversation: {event.reason}; "
+                "continuing with the full history"
             )
 
     def finish(self) -> None:
@@ -81,9 +107,17 @@ class AgentView:
         self.finish()
         self.err.print("[yellow]cancelled[/yellow]", highlight=False)
 
-    def _start_waiting(self) -> None:
+    def compacted(self, tokens_before: int, tokens_after: int) -> None:
+        self.note(f"context: compacted ({tokens_before:,} -> {tokens_after:,} tokens)")
+
+    def context_usage(self, tokens: int, window: int) -> None:
+        """How full the context is, as one dim line on standard error."""
+        self.finish()
+        self.note(f"context: {tokens:,} / {window:,} tokens ({tokens * 100 // window}%)")
+
+    def _start_waiting(self, text: str) -> None:
         if self._status is None:
-            self._status = self.err.status(escape(self.waiting_text))
+            self._status = self.err.status(escape(text))
             self._status.start()
 
     def _stop_waiting(self) -> None:

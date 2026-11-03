@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from nar.agent.events import (
     AgentEvent,
     AnswerCutOff,
+    CompactionFailed,
+    CompactionStarted,
+    ContextCompacted,
+    ContextPruned,
     ModelCallStarted,
     RequestFinished,
     ToolCallFinished,
     ToolCallStarted,
     TurnLimitReached,
 )
-from nar.context.manager import ContextManager
+from nar.context.compaction import CompactionError, Compactor
+from nar.context.manager import ContextManager, estimate_tokens
+from nar.context.pruning import prune_tool_results, shorten_unseen_results
+from nar.errors import ProviderError
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
 from nar.tools.base import Tool, ToolResult
@@ -35,12 +43,14 @@ class Agent:
         *,
         max_turns: int = 20,
         gate: ToolGate | None = None,
+        compactor: Compactor | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
         self.context = context
         self.max_turns = max_turns
         self.gate = gate
+        self.compactor = compactor
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:
         """Handle one user request, yielding what happens.
@@ -53,6 +63,7 @@ class Agent:
         try:
             self.context.add_user(prompt)
             for turn in range(1, self.max_turns + 1):
+                yield from self._manage_context(prompt)
                 yield ModelCallStarted(turn)
                 response = yield from self._call_model()
                 self.context.add_assistant(response)
@@ -75,6 +86,35 @@ class Agent:
         finally:
             if not completed:
                 self.context.rollback(mark)
+
+    def _manage_context(self, prompt: str) -> Iterator[AgentEvent]:
+        """Before a model call: over the limit, prune first and summarize only if needed."""
+        compactor = self.compactor
+        if compactor is None:
+            return
+        context = self.context
+        context.overhead_tokens = estimate_tokens(json.dumps(self.registry.definitions()))
+        if not compactor.over_limit(context):
+            return
+        before = context.token_count()
+        limits = compactor.limits
+        messages, pruned = prune_tool_results(context.messages, limits.keep_tokens)
+        messages, shortened = shorten_unseen_results(messages, limits.unseen_tokens)
+        if pruned or shortened:
+            context.replace_messages(messages)
+            yield ContextPruned(pruned, before, context.token_count(), shortened)
+            if not compactor.over_limit(context):
+                return
+        if not compactor.worth_compacting(context, prompt):
+            return  # it would be the same on every turn, so there is no warning
+        before = context.token_count()
+        yield CompactionStarted()
+        try:
+            compactor.compact(context, prompt)
+        except (CompactionError, ProviderError) as exc:
+            yield CompactionFailed(exc.message)
+            return
+        yield ContextCompacted(before, context.token_count())
 
     def _call_model(self) -> Iterator[AgentEvent]:
         response: LLMResponse | None = None
