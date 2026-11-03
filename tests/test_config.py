@@ -402,7 +402,7 @@ def test_describe_does_not_mask_command_and_url(home, project):
 
 @pytest.mark.parametrize(
     ("provider", "window"),
-    [("anthropic", 200000), ("openrouter", 128000), ("deepseek", 128000), ("ollama", 8192)],
+    [("anthropic", 200000), ("openrouter", 128000), ("deepseek", 128000), ("ollama", 4096)],
 )
 def test_context_window_default_depends_on_the_provider(home, project, provider, window):
     write(project / ".nar" / "config.toml", f'provider = "{provider}"\n')

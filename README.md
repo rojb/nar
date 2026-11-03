@@ -2,8 +2,8 @@
 
 `nar` is a CLI coding agent written in Python. It talks to a model (Anthropic, OpenRouter, DeepSeek or a
 local Ollama), lets it call tools (for now `read_file`) in a loop until it has an answer, and keeps
-the conversation in interactive mode. It asks before it edits files or runs commands. More tools,
-compaction and sessions arrive in later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
+the conversation in interactive mode, reducing it when it gets too long. It asks before it edits
+files or runs commands. More tools and sessions arrive in later changes (see the specs in [nar-specs](https://github.com/rojb/nar-specs)).
 
 ## Requirements
 
@@ -48,8 +48,8 @@ nar --show-config        # print the effective configuration and where each valu
 ```
 
 In interactive mode, empty lines are ignored; `exit`, end-of-input (Ctrl+D, or Ctrl+Z then Enter
-on Windows) and Ctrl+C at the prompt end the session with exit code 0. A line such as `/mcp` is a
-command and is not sent to the model (see "MCP servers"); a path such as `/etc/hosts` is not a
+on Windows) and Ctrl+C at the prompt end the session with exit code 0. A line such as `/mcp` or `/compact` is a
+command and is not sent to the model (see "MCP servers" and "Long conversations"); a path such as `/etc/hosts` is not a
 command and is sent as a request.
 
 ## How the agent works
@@ -90,6 +90,8 @@ nested tables (such as `mcp_servers`) are merged key by key:
 | `model` | any model name of that provider | the provider's default model (see below) |
 | `approval` | `ask`, `auto-edit`, `yolo` | `ask` |
 | `max_turns` | whole number, at least 1: model calls allowed per request | `20` |
+| `context_window` | whole number, at least 1000: size of the model's context in tokens | by provider (see "Long conversations") |
+| `context_threshold` | whole number from 1 to 100: percentage of the window where `nar` starts reducing the conversation | `80` |
 | `mcp_servers` | table of named MCP server definitions, `[mcp_servers.<name>]` (see "MCP servers") | empty |
 
 Example `.nar/config.toml`:
@@ -170,6 +172,42 @@ answer. If `nar` cannot ask because standard input or standard error is not a te
 a redirect, CI), it does not wait: the call is refused, the model is told how to allow it, and
 the run goes on, so the exit code stays 0. In that case use `--approval auto-edit` or
 `--approval yolo`, or set `approval` in `.nar/config.toml`.
+
+## Long conversations
+
+Before each model call `nar` compares the size of the conversation (system prompt, tool
+definitions and history) with `context_threshold` percent of `context_window`. Over that limit:
+
+1. **Pruning.** The results of the oldest tool calls are replaced by a marker that tells the model
+   to call the tool again if it needs them. The latest results, up to a quarter of the window,
+   stay complete. A new result always reaches the model; if it is too large for the context, it is
+   cut with a note telling the model to ask for a smaller part. This does not call the model.
+2. **Compaction.** If that is not enough, `nar` asks the same model for a summary of the older
+   messages (one extra call) and replaces them with it, keeping the latest messages. The request
+   in progress is never lost.
+
+Each step prints a line on standard error, for example
+`context: compacted (102,400 -> 21,000 tokens)`. If the summary fails, `nar` warns and continues
+with the history it has. Cancelling a request (Ctrl+C), or a provider error, also undoes any
+pruning or compaction that request did; files changed by tools stay changed.
+
+In interactive mode, a line after each request shows how full the context is
+(`context: 12,300 / 128,000 tokens (9%)`), and `/compact` summarizes the conversation on request.
+The count is the usage the provider reported plus an estimate of what came after it (about 4
+characters per token), so it is approximate.
+
+`nar` cannot know the real size of every model, so `context_window` has a conservative default
+per provider. Set it in `.nar/config.toml` to match your model:
+
+| Provider | Default `context_window` |
+|---|---|
+| `anthropic` | `200000` |
+| `openrouter` | `128000` |
+| `deepseek` | `128000` |
+| `ollama` | `4096` |
+
+With Ollama, raise it only if the server also uses a larger context (`OLLAMA_CONTEXT_LENGTH`):
+beyond its real context Ollama drops the oldest text without any error.
 
 ## Providers
 
