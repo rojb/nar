@@ -84,6 +84,15 @@ def test_the_kept_part_respects_a_quarter_of_the_window_and_half_of_the_conversa
     assert sum(len(m.content) for m in context.messages[1:]) // 4 <= before // 2
 
 
+def test_a_big_system_prompt_does_not_make_a_short_conversation_impossible_to_compact():
+    context = ContextManager("s" * 20_000)
+    context.overhead_tokens = 5000
+    context.replace_messages([Message.user("u" * 400), Message.assistant("a" * 400)])
+    compactor(window=128_000).compact(context)
+    assert context.messages[0].content.startswith(SUMMARY_HEADER)
+    assert context.messages[1:] == (Message.assistant("a" * 400),)
+
+
 def test_the_kept_part_never_starts_with_a_tool_result():
     call = ToolCall("c1", "write_file", {"content": "c" * 2000})
     context = conversation(

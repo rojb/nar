@@ -105,7 +105,7 @@ class Compactor:
 
     def _split(self, context: ContextManager) -> tuple[tuple[Message, ...], tuple[Message, ...]]:
         messages = context.messages
-        keep = min(self.limits.keep_tokens, context.token_count() // 2)
+        keep = min(self.limits.keep_tokens, estimate_messages(messages) // 2)
         start = _tail_start(messages, keep)
         return messages[:start], messages[start:]
 
