@@ -441,6 +441,18 @@ def test_pruning_alone_makes_no_summary_call():
     assert "removed to save context" in provider.requests[0]["messages"][2].content
 
 
+def test_a_big_result_reaches_the_model_before_it_can_be_pruned():
+    class BigTool(EchoTool):
+        def execute(self, arguments, context):
+            return ToolResult.ok("r" * 20_000)  # over the limit by itself
+
+    provider = ScriptedProvider(echo_call(), LLMResponse("the summary"), LLMResponse("done"))
+    agent = compacting_agent(provider, BigTool(), window=8000)
+    events = run(agent)
+    assert not [e for e in events if isinstance(e, ContextPruned)]
+    assert provider.requests[-1]["messages"][-1].content == "r" * 20_000
+
+
 def test_the_tool_definitions_count_towards_the_limit():
     provider = ScriptedProvider(LLMResponse("done"))
     agent = compacting_agent(provider, EchoTool())
@@ -528,6 +540,7 @@ def test_a_failed_request_after_pruning_restores_the_history():
         Message.user("first"),
         Message.assistant("", [call]),
         Message.tool_result("old", BIG_READ * 2),
+        Message.assistant("ok"),
     ]
     agent.context.replace_messages(messages)
     with pytest.raises(ProviderError):
