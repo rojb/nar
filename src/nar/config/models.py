@@ -30,6 +30,16 @@ DEFAULT_MODELS = {
 }
 
 
+# Used when no configuration file sets `context_window`, in tokens. Conservative: nar cannot
+# know the real model (openrouter/auto picks one per call; Ollama depends on the server).
+DEFAULT_CONTEXT_WINDOWS = {
+    ProviderName.ANTHROPIC: 200_000,
+    ProviderName.OPENROUTER: 128_000,
+    ProviderName.OLLAMA: 8_192,
+    ProviderName.DEEPSEEK: 128_000,
+}
+
+
 SERVER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 
 
@@ -83,6 +93,10 @@ class NarConfig(BaseModel):
     approval: ApprovalLevel = ApprovalLevel.ASK
     # Model calls the agent may make for one request (RRG-63).
     max_turns: int = Field(default=20, ge=1)
+    # Size of the model's context in tokens, and the percentage of it where nar starts
+    # reducing the conversation (RRG-70).
+    context_window: int | None = Field(default=None, ge=1000)
+    context_threshold: int = Field(default=80, ge=1, le=100)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
     @field_validator("mcp_servers")
@@ -108,4 +122,6 @@ class NarConfig(BaseModel):
     def _default_model_for_provider(self) -> NarConfig:
         if self.model is None:
             self.model = DEFAULT_MODELS[self.provider]
+        if self.context_window is None:
+            self.context_window = DEFAULT_CONTEXT_WINDOWS[self.provider]
         return self

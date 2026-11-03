@@ -398,3 +398,42 @@ def test_describe_does_not_mask_command_and_url(home, project):
     lines = load_config(project).describe(project)
     assert "mcp_servers.a.command = npx  (.nar/config.toml)" in lines
     assert "mcp_servers.b.url = http://h/mcp  (.nar/config.toml)" in lines
+
+
+@pytest.mark.parametrize(
+    ("provider", "window"),
+    [("anthropic", 200000), ("openrouter", 128000), ("deepseek", 128000), ("ollama", 8192)],
+)
+def test_context_window_default_depends_on_the_provider(home, project, provider, window):
+    write(project / ".nar" / "config.toml", f'provider = "{provider}"\n')
+    assert load_config(project).config.context_window == window
+
+
+def test_context_limit_defaults_are_shown(home, project):
+    loaded = load_config(project)
+    assert loaded.config.context_threshold == 80
+    described = loaded.describe(project)
+    assert "context_window = 128000  (default)" in described
+    assert "context_threshold = 80  (default)" in described
+
+
+def test_context_window_from_a_file_wins_with_any_provider(home, project):
+    write(project / ".nar" / "config.toml", 'provider = "ollama"\ncontext_window = 32000\n')
+    loaded = load_config(project)
+    assert loaded.config.context_window == 32000
+    assert any(
+        line.startswith("context_window = 32000") and ".nar" in line
+        for line in loaded.describe(project)
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["context_threshold = 0", "context_threshold = 101", "context_window = 999"],
+)
+def test_invalid_context_limits_name_setting_and_file(home, project, line):
+    path = write(project / ".nar" / "config.toml", line + "\n")
+    with pytest.raises(ConfigError) as caught:
+        load_config(project)
+    assert line.split(" ")[0] in caught.value.message
+    assert str(path) in caught.value.message
