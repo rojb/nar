@@ -126,7 +126,7 @@ def test_usage_error_keeps_click_exit_code(runner):
 
 
 def test_nar_error_is_one_line_without_traceback(runner, monkeypatch):
-    def boom(prompt, config, instructions):
+    def boom(prompt, config, instructions, resumed=None):
         raise NarError("it broke", exit_code=3)
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -137,7 +137,7 @@ def test_nar_error_is_one_line_without_traceback(runner, monkeypatch):
 
 
 def test_nar_error_traceback_with_debug(runner, monkeypatch):
-    def boom(prompt, config, instructions):
+    def boom(prompt, config, instructions, resumed=None):
         raise NarError("it broke")
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -149,7 +149,7 @@ def test_nar_error_traceback_with_debug(runner, monkeypatch):
 
 
 def test_unexpected_error_generic_message_and_hint(runner, monkeypatch):
-    def boom(prompt, config, instructions):
+    def boom(prompt, config, instructions, resumed=None):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -478,6 +478,204 @@ def test_repl_compact_command_calls_the_model_for_a_summary(runner, fake_provide
     assert result.exit_code == 0
     assert "context: compacted (" in result.stderr
     assert "<transcript>" in fake_provider.requests[1][0].content
+
+
+# Sessions (RRG-76)
+
+
+def saved_sessions(tmp_path):
+    from nar.session import SessionStore, sessions_dir
+
+    return SessionStore(sessions_dir()).list()[0]
+
+
+def test_a_request_is_saved_in_a_session(runner, workdir, fake_provider):
+    fake_provider.script = [LLMResponse("the answer")]
+    result = runner.invoke(main, [], input="the question\nexit\n")
+    assert result.exit_code == 0
+    (session,) = saved_sessions(workdir)
+    assert [m.content for m in session.messages] == ["the question", "the answer"]
+    assert session.cwd == str(workdir)
+    assert session.provider == "fake"
+    assert session.model == "fake-model"
+
+
+def test_single_mode_is_saved_too(runner, workdir, fake_provider):
+    assert runner.invoke(main, ["one prompt"]).exit_code == 0
+    assert len(saved_sessions(workdir)) == 1
+
+
+def test_exit_without_a_request_creates_no_session(runner, workdir, fake_provider):
+    assert runner.invoke(main, [], input="exit\n").exit_code == 0
+    assert saved_sessions(workdir) == []
+
+
+def test_a_cancelled_first_request_leaves_no_session(runner, workdir, fake_provider):
+    fake_provider.script = [KeyboardInterrupt()]
+    result = runner.invoke(main, [], input="first\nexit\n")
+    assert "cancelled" in result.stderr
+    assert saved_sessions(workdir) == []
+
+
+def test_a_cancelled_later_request_leaves_no_trace(runner, workdir, fake_provider):
+    fake_provider.script = [LLMResponse("one"), KeyboardInterrupt()]
+    runner.invoke(main, [], input="first\nsecond\nexit\n")
+    (session,) = saved_sessions(workdir)
+    assert [m.content for m in session.messages] == ["first", "one"]
+
+
+def test_a_process_dying_during_a_tool_leaves_every_call_answered(
+    runner, workdir, fake_provider, monkeypatch
+):
+    from nar.session import SessionStore, sessions_dir
+
+    (workdir / "a.txt").write_text("hello", encoding="utf-8")
+    calls = (ToolCall("c1", "read_file", {"path": "a.txt"}), ToolCall("c2", "list_dir", {}))
+    fake_provider.script = [
+        LLMResponse("", (ToolCall("c0", "read_file", {"path": "a.txt"}),), StopReason.TOOL_CALLS),
+        LLMResponse("", calls, StopReason.TOOL_CALLS),
+        LLMResponse("done"),
+    ]
+    seen = []
+    real_save = SessionStore.save
+
+    def spy(self, session):
+        seen.append(session.messages)
+        real_save(self, session)
+
+    monkeypatch.setattr(SessionStore, "save", spy)
+    assert runner.invoke(main, ["read it"]).exit_code == 0
+    assert sessions_dir().is_dir()
+    assert len(seen) >= 3
+    for messages in seen:  # whatever save the process died after
+        called = {c.id for m in messages for c in m.tool_calls}
+        assert called == {m.tool_call_id for m in messages if m.role == "tool"}
+
+
+def test_compacted_messages_are_what_is_saved(runner, workdir, fake_provider):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text(
+        "context_window = 2000\ncontext_threshold = 50\n", encoding="utf-8"
+    )
+    fake_provider.script = [LLMResponse("a" * 8000), LLMResponse("the summary"), LLMResponse("ok")]
+    runner.invoke(main, [], input=f"{'u' * 8000}\nnext\nexit\n")
+    (session,) = saved_sessions(workdir)
+    assert "the summary" in session.messages[0].content
+    assert "u" * 8000 not in [m.content for m in session.messages]
+
+
+def test_compact_command_saves_the_session(runner, workdir, fake_provider):
+    fake_provider.script = [LLMResponse("x" * 400), LLMResponse("the summary")]
+    runner.invoke(main, [], input=f"{'u' * 400}\n/compact\nexit\n")
+    (session,) = saved_sessions(workdir)
+    assert "the summary" in session.messages[0].content
+
+
+def test_resume_continues_the_latest_session_of_this_folder(runner, workdir, fake_provider):
+    fake_provider.script = [LLMResponse("GATO-42 noted")]
+    runner.invoke(main, [], input="the code name is GATO-42\nexit\n")
+    fake_provider.requests.clear()
+    fake_provider.script = [LLMResponse("It was GATO-42")]
+    result = runner.invoke(main, ["--resume"], input="what was it?\nexit\n")
+    assert result.exit_code == 0
+    assert "> the code name is GATO-42" in result.stderr
+    assert "context: 0 /" not in result.stderr
+    usage = [line for line in result.stderr.splitlines() if line.startswith("context:")]
+    assert int(usage[0].split()[1].replace(",", "")) > 500  # counts the tool definitions
+    assert "GATO-42 noted" in result.stderr
+    assert "GATO-42 noted" not in result.stdout
+    assert [m.content for m in fake_provider.requests[0]] == [
+        "the code name is GATO-42",
+        "GATO-42 noted",
+        "what was it?",
+    ]
+    (session,) = saved_sessions(workdir)  # still one session, with the new messages
+    assert session.messages[-1].content == "It was GATO-42"
+
+
+def test_resume_with_an_id_and_a_prompt_runs_in_single_mode(runner, workdir, fake_provider):
+    fake_provider.script = [LLMResponse("first answer")]
+    runner.invoke(main, ["first"])
+    (session,) = saved_sessions(workdir)
+    fake_provider.requests.clear()
+    result = runner.invoke(main, ["--resume", session.id[:12], "second"])
+    assert result.exit_code == 0
+    assert f"resumed session {session.id} (2 messages)" in result.stderr
+    assert "> first" not in result.stderr
+    assert len(fake_provider.requests[0]) == 3
+
+
+def test_resume_without_sessions_fails_before_needing_a_key(runner, workdir):
+    result = runner.invoke(main, ["--resume"])
+    assert result.exit_code == 1
+    assert "no saved session in" in result.stderr
+    assert "API_KEY" not in result.stderr
+
+
+def test_resume_does_not_take_a_session_of_another_folder(
+    runner, workdir, fake_provider, tmp_path, monkeypatch
+):
+    runner.invoke(main, ["here"])
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    result = runner.invoke(main, ["--resume"])
+    assert result.exit_code == 1
+    assert "no saved session in" in result.stderr
+
+
+def test_resume_by_id_from_another_folder_warns_and_moves_the_session(
+    runner, workdir, fake_provider, tmp_path, monkeypatch
+):
+    runner.invoke(main, ["here"])
+    (session,) = saved_sessions(workdir)
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    result = runner.invoke(main, ["--resume", session.id, "there"])
+    assert f"this session was started in {workdir}" in result.stderr
+    (moved,) = saved_sessions(workdir)
+    assert moved.cwd == str(other)
+
+
+def test_resume_with_a_different_model_says_so(runner, workdir, fake_provider):
+    runner.invoke(main, ["here"])
+    fake_provider.model = "another-model"
+    result = runner.invoke(main, ["--resume", ""], input="exit\n")
+    assert "continuing with fake / another-model" in result.stderr
+
+
+@pytest.mark.parametrize("word", ["unknown-id", "a prompt with spaces"])
+def test_resume_with_a_word_that_is_no_session_fails_with_a_hint(runner, workdir, word):
+    result = runner.invoke(main, ["--resume", word])
+    assert result.exit_code == 1
+    assert "API_KEY" not in result.stderr
+    assert word in result.stderr
+    assert 'nar --resume <id> "prompt"' in result.stderr
+
+
+def test_resume_of_a_corrupt_file_names_it_and_leaves_it(runner, workdir):
+    from nar.session import sessions_dir
+
+    sessions_dir().mkdir(parents=True)
+    path = sessions_dir() / "broken.json"
+    path.write_text("not json", encoding="utf-8")
+    result = runner.invoke(main, ["--resume", "broken"])
+    assert result.exit_code == 1
+    assert "broken.json" in result.stderr
+    assert path.read_text(encoding="utf-8") == "not json"
+
+
+def test_help_does_not_load_the_session_code():
+    code = (
+        "import sys; from nar.cli import main\n"
+        "try: main(['--help'])\n"
+        "except SystemExit: pass\n"
+        "assert 'nar.session' not in sys.modules"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert "--resume" in done.stdout
 
 
 def test_repl_missing_key_fails_at_startup(runner, workdir):

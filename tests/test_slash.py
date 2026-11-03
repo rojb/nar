@@ -11,6 +11,7 @@ from nar.errors import ProviderError
 from nar.mcp.manager import ServerStatus
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, Message, ResponseDone
+from nar.session import Session, SessionRecorder, SessionStore
 from nar.tools.registry import ToolRegistry
 from nar.ui.agent_view import AgentView
 
@@ -94,7 +95,10 @@ def test_a_line_that_is_not_a_command_is_left_to_the_model():
 def test_unknown_command_prints_an_error_listing_the_commands():
     context, out, err = make_context(None)
     assert slash.dispatch("/foo", context) is True
-    assert err.getvalue().strip() == "error: /foo is not a command; available: /mcp, /compact"
+    assert (
+        err.getvalue().strip()
+        == "error: /foo is not a command; available: /mcp, /compact, /sessions, /resume"
+    )
     assert out.getvalue() == ""
 
 
@@ -157,7 +161,7 @@ def test_registered_commands_can_be_added_and_receive_their_argument(monkeypatch
     assert slash.dispatch("/echo hello there", context) is True
     assert seen == ["hello there"]
     slash.dispatch("/nope", context)
-    assert "/mcp, /compact, /echo" in err.getvalue()
+    assert "/mcp, /compact, /sessions, /resume, /echo" in err.getvalue()
 
 
 def test_compact_replaces_the_history_and_shows_the_sizes():
@@ -197,3 +201,99 @@ def test_a_failed_compact_keeps_the_history_and_the_session(answer, shown):
     assert slash.dispatch("/compact", context) is True
     assert conversation.messages == HISTORY
     assert shown in err.getvalue()
+
+
+# /sessions and /resume (RRG-76)
+
+
+@pytest.fixture
+def session_context(tmp_path, monkeypatch):
+    """A context in ``tmp_path/project`` whose recorder has one saved session, "current"."""
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    store = SessionStore(tmp_path / "sessions")
+    context, provider, conversation, err = compact_context("the summary", Message.user("current"))
+    session = Session(
+        "current",
+        "2026-01-01T00:00:00+00:00",
+        "2026-01-01T00:00:00+00:00",
+        str(project),
+        "scripted",
+        "scripted-model",
+    )
+    context.recorder = SessionRecorder(store, session, conversation, context.view.warn)
+    context.recorder.save()
+    return context, store, conversation, project
+
+
+def other_session(session_id, cwd, updated="2026-02-01T00:00:00+00:00", text="other request"):
+    return Session(
+        session_id,
+        updated,
+        updated,
+        str(cwd),
+        "scripted",
+        "scripted-model",
+        (Message.user(text), Message.assistant("other answer")),
+    )
+
+
+def test_sessions_lists_without_calling_the_model_and_marks_the_current(session_context):
+    context, store, _, project = session_context
+    store.save(other_session("other", project))
+    (store.directory / "broken.json").write_text("not json", encoding="utf-8")
+    assert slash.dispatch("/sessions", context) is True
+    assert context.agent.provider.calls == 0
+    out = context.console.file.getvalue()
+    assert "* current" in out
+    assert "  other" in out
+    assert "other request" in out
+    assert str(project) in out
+    assert "1 session files are not valid" in context.err.file.getvalue()
+
+
+def test_resume_with_an_id_switches_and_shows_the_history(session_context):
+    context, store, conversation, project = session_context
+    store.save(other_session("other-1", project))
+    assert slash.dispatch("/resume other", context) is True
+    assert conversation.messages[0] == Message.user("other request")
+    assert "> other request" in context.err.file.getvalue()
+    conversation.add_user("new")
+    context.recorder.save()
+    assert store.load("other-1").messages[-1] == Message.user("new")
+    assert store.load("current").messages == (Message.user("current"),)
+
+
+def test_resume_without_an_id_takes_the_latest_other_session_of_the_folder(session_context):
+    context, store, conversation, project = session_context
+    store.save(other_session("older", project, "2026-02-01T00:00:00+00:00", "older one"))
+    store.save(other_session("newer", project, "2026-03-01T00:00:00+00:00", "newer one"))
+    store.save(other_session("elsewhere", "/x", "2026-04-01T00:00:00+00:00", "elsewhere one"))
+    slash.dispatch("/resume", context)
+    assert conversation.messages[0] == Message.user("newer one")
+
+
+def test_resume_saves_the_current_conversation_first(session_context):
+    context, store, conversation, project = session_context
+    store.save(other_session("other", project))
+    conversation.add_user("not saved yet")
+    slash.dispatch("/resume other", context)
+    assert store.load("current").messages[-1] == Message.user("not saved yet")
+
+
+def test_resume_with_nothing_to_resume_keeps_the_session(session_context):
+    context, _, conversation, _ = session_context
+    assert slash.dispatch("/resume", context) is True
+    assert "no other saved session" in context.err.file.getvalue()
+    assert conversation.messages == (Message.user("current"),)
+    assert context.recorder.session.id == "current"
+
+
+@pytest.mark.parametrize("argument", ["nope", "../x"])
+def test_resume_with_a_bad_id_keeps_the_session(session_context, argument):
+    context, _, conversation, _ = session_context
+    assert slash.dispatch(f"/resume {argument}", context) is True
+    assert "error:" in context.err.file.getvalue()
+    assert context.recorder.session.id == "current"
+    assert conversation.messages == (Message.user("current"),)

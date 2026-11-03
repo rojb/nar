@@ -6,6 +6,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -15,17 +16,48 @@ from nar.config import ApprovalLevel, NarConfig, ProviderName, load_config
 from nar.context import ProjectInstructions, load_project_instructions
 from nar.errors import NarError
 
+if TYPE_CHECKING:
+    from nar.session import Session
 
-def run_single(prompt: str, config: NarConfig, instructions: ProjectInstructions | None) -> int:
+
+def run_single(
+    prompt: str,
+    config: NarConfig,
+    instructions: ProjectInstructions | None,
+    resumed: Session | None = None,
+) -> int:
     """Run the agent on one prompt; returns the exit code."""
     # Imported here: the provider SDKs are slow to import and other commands do not need them.
-    from nar.cli.runner import Outcome, connect_mcp, create_agent, run_request
+    from nar.cli.runner import Outcome, connect_mcp, create_agent, open_session, run_request
     from nar.ui.agent_view import AgentView
 
     view = AgentView()
     agent = create_agent(config, Path.cwd(), instructions, view)
     with connect_mcp(config, agent, view):
-        return 1 if run_request(agent, view, prompt) is Outcome.TURN_LIMIT else 0
+        recorder = open_session(agent, view, Path.cwd(), resumed)
+        if resumed is not None:
+            view.note(f"resumed session {resumed.id} ({len(resumed.messages)} messages)")
+        return 1 if run_request(agent, view, prompt, recorder) is Outcome.TURN_LIMIT else 0
+
+
+def _find_session(resume: str, cwd: Path) -> Session:
+    """The session ``--resume`` asks for; failing here needs no provider key or MCP server."""
+    from nar.session import SessionFileError, SessionStore, sessions_dir
+
+    store = SessionStore(sessions_dir())
+    if resume:
+        try:
+            return store.find(resume)
+        except SessionFileError as exc:
+            if exc.message.startswith(("no session", "invalid session id")):
+                exc = SessionFileError(
+                    f'{exc.message}; to give a prompt too, use nar --resume <id> "prompt"'
+                )
+            raise exc from None
+    session = store.latest(cwd)
+    if session is None:
+        raise SessionFileError(f"no saved session in {cwd}; use nar --resume <id>")
+    return session
 
 
 @click.command(
@@ -58,6 +90,13 @@ def run_single(prompt: str, config: NarConfig, instructions: ProjectInstructions
         "yolo never asks."
     ),
 )
+@click.option(
+    "--resume",
+    is_flag=False,
+    flag_value="",
+    metavar="[ID]",
+    help="Continue the latest session of this folder, or the session with this id.",
+)
 @click.argument("prompt", required=False)
 def cli(
     prompt: str | None,
@@ -65,6 +104,7 @@ def cli(
     provider: str | None,
     model: str | None,
     approval: str | None,
+    resume: str | None,
 ) -> int:
     cwd = Path.cwd()
     # Invalid configuration stops startup here.
@@ -75,10 +115,11 @@ def cli(
         for line in loaded.describe(cwd):
             click.echo(line)
         return 0
+    resumed = _find_session(resume, cwd) if resume is not None else None
     instructions = load_project_instructions(cwd)
     if prompt is not None:
-        return run_single(prompt, loaded.config, instructions)
-    repl.run(loaded.config, instructions)
+        return run_single(prompt, loaded.config, instructions, resumed)
+    repl.run(loaded.config, instructions, resumed)
     return 0
 
 

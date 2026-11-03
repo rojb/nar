@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from nar.agent import (
     Agent,
     CompactionStarted,
     ContextCompacted,
+    ModelCallStarted,
     TurnLimitReached,
     approval_gate,
     build_system_prompt,
@@ -26,6 +28,7 @@ from nar.context.manager import ContextManager
 from nar.errors import ProviderError
 from nar.mcp import McpManager
 from nar.providers import factory
+from nar.session import Session, SessionRecorder, SessionStore, sessions_dir
 from nar.tools import create_default_registry
 from nar.tools.memory import MemoryFileError, MemoryStore, memory_path
 from nar.ui.agent_view import AgentView
@@ -75,27 +78,63 @@ def connect_mcp(config: NarConfig, agent: Agent, view: AgentView) -> Iterator[Mc
         manager.close()
 
 
-def run_request(agent: Agent, view: AgentView, prompt: str) -> Outcome:
-    """Run one request, showing its events. Exceptions propagate after cleanup."""
+def run_request(
+    agent: Agent, view: AgentView, prompt: str, recorder: SessionRecorder | None = None
+) -> Outcome:
+    """Run one request, showing and saving as it goes. Exceptions propagate after cleanup."""
     outcome = Outcome.FINISHED
     try:
         # closing(): an interrupt in the view still closes the generator, which
         # removes the unfinished request from the conversation.
         with closing(agent.run(prompt)) as events:
             for event in events:
+                # Before a model call every earlier tool call has its result.
+                if recorder is not None and isinstance(event, ModelCallStarted):
+                    recorder.save()
                 view.handle(event)
                 if isinstance(event, TurnLimitReached):
                     outcome = Outcome.TURN_LIMIT
     finally:
         view.finish()
+        # Here a cancelled or failed request has already been rolled back.
+        if recorder is not None:
+            recorder.save()
     return outcome
 
 
+def open_session(
+    agent: Agent, view: AgentView, cwd: Path, resumed: Session | None = None
+) -> SessionRecorder:
+    """The recorder of this run: a new session, or ``resumed`` loaded into the conversation."""
+    provider = agent.provider
+    session = resumed or Session.new(cwd, provider.name, provider.model)
+    recorder = SessionRecorder(SessionStore(sessions_dir()), session, agent.context, view.warn)
+    if resumed is not None:
+        continue_session(agent, view, recorder, resumed, cwd)
+    return recorder
+
+
+def continue_session(
+    agent: Agent, view: AgentView, recorder: SessionRecorder, session: Session, cwd: Path
+) -> None:
+    """Load ``session``; it goes on in this folder with the configured provider and model."""
+    provider = agent.provider
+    if session.cwd != str(cwd):
+        view.warn(f"warning: this session was started in {session.cwd}; tools run in {cwd}")
+    if (session.provider, session.model) != (provider.name, provider.model):
+        view.note(
+            f"session used {session.provider} / {session.model}; "
+            f"continuing with {provider.name} / {provider.model}"
+        )
+    recorder.switch(replace(session, cwd=str(cwd), provider=provider.name, model=provider.model))
+
+
 def show_context_usage(agent: Agent, view: AgentView) -> None:
+    agent.measure_tools()
     view.context_usage(agent.context.token_count(), agent.compactor.limits.window)
 
 
-def compact_now(agent: Agent, view: AgentView) -> None:
+def compact_now(agent: Agent, view: AgentView, recorder: SessionRecorder | None = None) -> None:
     """``/compact``: any failure or Ctrl+C is shown, and the history stays as it was."""
     if not agent.context.messages:
         view.note("context: there is nothing to compact")
@@ -110,6 +149,8 @@ def compact_now(agent: Agent, view: AgentView) -> None:
         view.error(exc.message)
     else:
         view.handle(ContextCompacted(before, agent.context.token_count()))
+        if recorder is not None:
+            recorder.save()
     finally:
         view.finish()
     show_context_usage(agent, view)
