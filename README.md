@@ -204,7 +204,7 @@ per provider. Set it in `.nar/config.toml` to match your model:
 | `anthropic` | `200000` |
 | `openrouter` | `128000` |
 | `deepseek` | `128000` |
-| `ollama` | `8192` |
+| `ollama` | `4096` |
 
 With Ollama, raise it only if the server also uses a larger context (`OLLAMA_CONTEXT_LENGTH`):
 beyond its real context Ollama drops the oldest text without any error.

@@ -35,7 +35,7 @@ DEFAULT_MODELS = {
 DEFAULT_CONTEXT_WINDOWS = {
     ProviderName.ANTHROPIC: 200_000,
     ProviderName.OPENROUTER: 128_000,
-    ProviderName.OLLAMA: 8_192,
+    ProviderName.OLLAMA: 4_096,
     ProviderName.DEEPSEEK: 128_000,
 }
 
