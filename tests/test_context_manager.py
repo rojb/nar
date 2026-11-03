@@ -61,3 +61,26 @@ def test_rollback_before_usage_forgets_it():
     context.add_assistant(LLMResponse("hello", usage=Usage(500, 5)))
     context.rollback(mark)
     assert context.token_count() == estimate_tokens("system")
+
+
+def test_rollback_restores_messages_replaced_after_the_mark():
+    context = ContextManager("system")
+    context.add_user("first")
+    context.add_assistant(LLMResponse("one", usage=Usage(500, 10)))
+    mark = context.mark()
+    context.replace_messages([Message.user("summary")])
+    context.add_user("second")
+    context.rollback(mark)
+    assert context.messages == (Message.user("first"), Message.assistant("one"))
+    assert context.token_count() == 510
+
+
+def test_replace_messages_makes_the_count_an_estimate_with_the_overhead():
+    context = ContextManager("x" * 40)
+    context.overhead_tokens = 7
+    context.add_user("hi")
+    context.add_assistant(LLMResponse("one", usage=Usage(5000, 10)))
+    assert context.token_count() == 5010  # reported usage already has the tool definitions
+    context.replace_messages([Message.user("y" * 8)])
+    assert context.messages == (Message.user("y" * 8),)
+    assert context.token_count() == 10 + 7 + 2
