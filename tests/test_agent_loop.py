@@ -5,6 +5,10 @@ import pytest
 from nar.agent.approval import ApprovalAnswer, ApprovalDecision, approval_gate
 from nar.agent.events import (
     AnswerCutOff,
+    CompactionFailed,
+    CompactionStarted,
+    ContextCompacted,
+    ContextPruned,
     ModelCallStarted,
     RequestFinished,
     ToolCallFinished,
@@ -13,6 +17,7 @@ from nar.agent.events import (
 )
 from nar.agent.loop import Agent
 from nar.config.models import ApprovalLevel
+from nar.context.compaction import Compactor, ContextLimits
 from nar.context.manager import ContextManager
 from nar.errors import ProviderError
 from nar.providers.base import LLMProvider
@@ -44,7 +49,7 @@ class ScriptedProvider(LLMProvider):
     def stream(self, messages, *, system=None, tools=(), max_tokens=100):
         self.requests.append({"messages": list(messages), "system": system, "tools": list(tools)})
         outcome = self.responses.pop(0)
-        if isinstance(outcome, Exception):
+        if isinstance(outcome, BaseException):
             raise outcome
         if outcome.content:
             yield TextDelta(outcome.content)
@@ -389,3 +394,151 @@ def test_without_a_prompter_the_request_still_reaches_the_final_answer(tmp_path)
     assert dangerous.seen == []
     assert isinstance(events[-1], RequestFinished)
     assert events[-1].response.content == "I could not do that"
+
+
+# Context limit (RRG-70)
+
+BIG_READ = "r" * 8000  # 2,000 tokens
+
+
+def compacting_agent(provider, *tools, window=4000):
+    agent = make_agent(provider, *tools)
+    agent.compactor = Compactor(provider, ContextLimits(window, 80))
+    return agent
+
+
+def echo_call(call_id="1"):
+    return LLMResponse("", (ToolCall(call_id, "echo", {"text": "x"}),), StopReason.TOOL_CALLS)
+
+
+def test_below_the_limit_the_history_is_sent_unchanged():
+    provider = ScriptedProvider(LLMResponse("done"))
+    agent = compacting_agent(provider)
+    events = run(agent)
+    assert provider.requests[0]["messages"] == [Message.user("go")]
+    assert not [e for e in events if isinstance(e, ContextPruned | CompactionStarted)]
+
+
+def test_pruning_alone_makes_no_summary_call():
+    provider = ScriptedProvider(LLMResponse("done"))
+    agent = compacting_agent(provider)
+    call = ToolCall("old", "read_file", {"path": "a"})
+    agent.context.replace_messages(
+        [
+            Message.user("first"),
+            Message.assistant("", [call]),
+            Message.tool_result("old", BIG_READ * 2),
+            Message.assistant("ok"),
+        ]
+    )
+    events = run(agent)
+    pruned = [e for e in events if isinstance(e, ContextPruned)]
+    assert len(pruned) == 1
+    assert pruned[0].count == 1
+    assert pruned[0].tokens_after < pruned[0].tokens_before
+    assert not [e for e in events if isinstance(e, CompactionStarted)]
+    assert len(provider.requests) == 1
+    assert "removed to save context" in provider.requests[0]["messages"][2].content
+
+
+def test_the_tool_definitions_count_towards_the_limit():
+    provider = ScriptedProvider(LLMResponse("done"))
+    agent = compacting_agent(provider, EchoTool())
+    run(agent)
+    assert agent.context.overhead_tokens > 0
+
+
+def test_compaction_between_tool_calls_keeps_the_request_and_a_valid_history():
+    class BigTool(EchoTool):
+        def execute(self, arguments, context):
+            return ToolResult.ok("r" * 3000)  # recent enough not to be pruned
+
+    provider = ScriptedProvider(echo_call(), LLMResponse("the summary"), LLMResponse("done"))
+    agent = compacting_agent(provider, BigTool())
+    agent.context.replace_messages([Message.user("u" * 11_000), Message.assistant("ok")])
+    prompt = "fix the bug " + "p" * 1000  # under the limit (3,200) until the tool answers
+    events = run(agent, prompt)
+
+    kinds = [type(e) for e in events]
+    assert kinds.index(CompactionStarted) < kinds.index(ContextCompacted)
+    compacted = next(e for e in events if isinstance(e, ContextCompacted))
+    assert compacted.tokens_after < compacted.tokens_before
+    last_call = provider.requests[-1]["messages"]
+    assert prompt in last_call[0].content
+    called = {c.id for m in last_call for c in m.tool_calls}
+    answered = {m.tool_call_id for m in last_call if m.role == "tool"}
+    assert called == answered
+
+
+def test_a_provider_error_while_compacting_warns_and_continues():
+    provider = ScriptedProvider(ProviderError("down", "scripted"), LLMResponse("done"))
+    agent = compacting_agent(provider)
+    agent.context.replace_messages([Message.user("u" * 16_000), Message.assistant("a" * 16_000)])
+    before = agent.context.messages
+    events = run(agent)
+    failed = [e for e in events if isinstance(e, CompactionFailed)]
+    assert [e.reason for e in failed] == ["down"]
+    assert isinstance(events[-1], RequestFinished)
+    assert agent.context.messages[:2] == before
+
+
+def test_an_empty_summary_warns_and_continues():
+    provider = ScriptedProvider(LLMResponse(""), LLMResponse("done"))
+    agent = compacting_agent(provider)
+    agent.context.replace_messages([Message.user("u" * 16_000), Message.assistant("a" * 16_000)])
+    events = run(agent)
+    assert [e.reason for e in events if isinstance(e, CompactionFailed)] == [
+        "the model returned an empty summary"
+    ]
+
+
+def test_too_small_to_compact_is_silent_and_makes_no_summary_call():
+    provider = ScriptedProvider(LLMResponse("done"))
+    agent = compacting_agent(provider)
+    agent.context.system_prompt = "s" * 16_000
+    events = run(agent)
+    assert not [e for e in events if isinstance(e, CompactionStarted | CompactionFailed)]
+    assert len(provider.requests) == 1
+
+
+def test_a_huge_request_alone_is_not_compacted_on_every_turn():
+    provider = ScriptedProvider(LLMResponse("done"))
+    agent = compacting_agent(provider)
+    events = run(agent, "p" * 40_000)
+    assert not [e for e in events if isinstance(e, CompactionStarted | CompactionFailed)]
+    assert len(provider.requests) == 1
+    assert provider.requests[0]["messages"] == [Message.user("p" * 40_000)]
+
+
+def test_cancelling_after_compaction_restores_the_history():
+    provider = ScriptedProvider(LLMResponse("the summary"), KeyboardInterrupt())
+    agent = compacting_agent(provider)
+    messages = [Message.user("u" * 16_000), Message.assistant("a" * 16_000)]
+    agent.context.replace_messages(messages)
+    with pytest.raises(KeyboardInterrupt):
+        run(agent)
+    assert list(agent.context.messages) == messages
+
+
+def test_a_failed_request_after_pruning_restores_the_history():
+    provider = ScriptedProvider(ProviderError("down", "scripted"))
+    agent = compacting_agent(provider)
+    call = ToolCall("old", "read_file", {"path": "a"})
+    messages = [
+        Message.user("first"),
+        Message.assistant("", [call]),
+        Message.tool_result("old", BIG_READ * 2),
+    ]
+    agent.context.replace_messages(messages)
+    with pytest.raises(ProviderError):
+        run(agent)
+    assert list(agent.context.messages) == messages
+
+
+def test_an_agent_without_a_compactor_never_reduces_the_history():
+    provider = ScriptedProvider(LLMResponse("done"))
+    agent = make_agent(provider)
+    agent.context.replace_messages([Message.user("u" * 1_000_000)])
+    events = run(agent)
+    assert not [e for e in events if isinstance(e, ContextPruned | CompactionStarted)]
+    assert agent.context.overhead_tokens == 0

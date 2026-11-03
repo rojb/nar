@@ -43,8 +43,39 @@ class RequestFinished:
     response: LLMResponse
 
 
+@dataclass(frozen=True)
+class ContextPruned:
+    """Old tool results were replaced with a marker to make room."""
+
+    count: int
+    tokens_before: int
+    tokens_after: int
+
+
+@dataclass(frozen=True)
+class CompactionStarted:
+    """The model is being asked to summarize the older messages."""
+
+
+@dataclass(frozen=True)
+class ContextCompacted:
+    tokens_before: int
+    tokens_after: int
+
+
+@dataclass(frozen=True)
+class CompactionFailed:
+    """The history did not change and the request goes on."""
+
+    reason: str
+
+
 AgentEvent = (
     ModelCallStarted
+    | ContextPruned
+    | CompactionStarted
+    | ContextCompacted
+    | CompactionFailed
     | TextDelta
     | ToolCallStarted
     | ToolCallFinished
