@@ -17,14 +17,28 @@ from nar.agent.events import (
     CompactionStarted,
     ContextCompacted,
     ContextPruned,
+    LoopAborted,
+    LoopDetected,
     ModelCallStarted,
     ToolCallFinished,
     ToolCallStarted,
     TurnLimitReached,
 )
+from nar.agent.loops import LoopKind, count_text
 from nar.providers.messages import TextDelta
 from nar.providers.retry import RetryNotice
 from nar.ui.tool_view import ToolRenderer
+
+
+def _looped(event: LoopDetected | LoopAborted, *, past: bool) -> str:
+    """The repeated calls, as a phrase: ``repeated read_file ...`` or ``alternated ...``."""
+    if event.kind is LoopKind.OSCILLATION:
+        verb = "alternated" if past else "alternating"
+        return f"{verb} between the same calls ({event.call.name})"
+    verb = "repeated" if past else "repeating"
+    if past:
+        return f"{verb} {event.call.name} with the same arguments {count_text(event.count)}"
+    return f"{verb} {event.call.name}"
 
 
 class AgentView:
@@ -64,6 +78,14 @@ class AgentView:
                 f"stopped after {event.max_turns} turns without a final answer; "
                 "raise max_turns in .nar/config.toml to allow more"
             )
+        elif isinstance(event, LoopDetected):
+            self._close_line()
+            self.warn(
+                f"warning: the agent {_looped(event, past=True)}; asked it to change strategy"
+            )
+        elif isinstance(event, LoopAborted):
+            self._close_line()
+            self.warn(f"stopped: the agent kept {_looped(event, past=False)} after the warning")
         elif isinstance(event, ContextPruned):
             self._close_line()
             done = [f"removed {event.count} old tool results"] if event.count else []
