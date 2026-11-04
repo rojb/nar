@@ -44,6 +44,7 @@ nar --provider ollama --model qwen2.5-coder "hello"   # choose provider/model fo
 nar --approval auto-edit "add a docstring to main.py"  # edit project files without asking
 nar --resume             # continue the latest session of this folder
 nar --resume 20261103 "and now?"  # continue that session with one prompt and exit
+nar --trust-project-tools "use my tool"  # allow this project's tool files without asking
 nar --version
 nar --help
 nar --show-config        # print the effective configuration and where each value comes from
@@ -271,6 +272,52 @@ want them. Later checkpoints are kept, so `/restore 2` after `/restore 1` undoes
 Checkpoints last with their session and are available again after `nar --resume` or `/resume`. They
 are saved in `~/.nar/sessions/checkpoints/<session id>.json`, in plain text like sessions, with the
 same permissions; `nar` never removes them.
+
+## Custom tools
+
+Add a tool without changing `nar`: drop a Python file that defines a subclass of `Tool` in one of
+these folders, and start `nar`.
+
+| Folder | Scope | Runs |
+|---|---|---|
+| `~/.nar/tools/` | all your projects | without asking |
+| `.nar/tools/` | this project | after you allow it |
+
+There is a working example in [`examples/tools/word_count.py`](examples/tools/word_count.py):
+
+```python
+from nar.tools import Tool, ToolContext, ToolResult
+
+
+class WordCountTool(Tool):
+    name = "word_count"
+    description = "Count the lines and words of a text file."
+    parameters = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    }
+
+    def execute(self, arguments: dict, context: ToolContext) -> ToolResult:
+        text = (context.cwd / arguments["path"]).read_text(encoding="utf-8")
+        return ToolResult.ok(f"{len(text.split())} words")
+```
+
+- A file can define several tools. Files starting with `_` are skipped, and each tool is created
+  with no arguments.
+- **Set `requires_approval = True` on a tool that changes anything.** It is `False` by default, so
+  otherwise the model can call the tool without asking you.
+- A file that fails (an error, `sys.exit`, a bad tool) prints one warning and the others still
+  load. A name that is already taken keeps the existing tool, so a custom tool cannot replace
+  `read_file` or any other.
+
+**A tool file is ordinary Python and runs with your permissions as soon as it loads.** That is why
+the files of `.nar/tools/`, which come with whatever repository you cloned, do not run until you
+say so. `nar` lists them and asks once for that folder and those contents; if a file is added or
+changed, it asks again. Answers are kept in `~/.nar/trusted_tools.json`. Where `nar` cannot ask (a
+pipe, CI) they are skipped with a warning, unless you pass `--trust-project-tools`. Neither
+`.nar/config.toml` nor `--approval yolo` can allow them, because a repository can ship its own
+configuration.
 
 ## Providers
 
