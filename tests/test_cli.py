@@ -1409,6 +1409,27 @@ def test_model_switches_and_the_conversation_continues(runner, monkeypatch):
     assert "it was GATO-42" in result.stdout
 
 
+def test_compact_after_model_asks_the_new_provider_for_the_summary(runner, monkeypatch, workdir):
+    first, second = FakeProvider(), FakeProvider()
+    created = []
+
+    def create(config, on_retry=None):
+        provider = (first, second)[min(len(created), 1)]
+        provider.config, provider.on_retry = config, on_retry
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr("nar.providers.factory.create_provider", create)
+    first.script = [LLMResponse("x" * 400)]
+    second.script = [LLMResponse("the summary")]
+    lines = f"{'u' * 400}\n/model ollama\n/compact\nexit\n"
+    result = runner.invoke(main, [], input=lines)
+    assert result.exit_code == 0
+    assert "context: compacted (" in result.stderr
+    assert len(first.requests) == 1  # only the request, not the summary
+    assert "<transcript>" in second.requests[0][0].content
+
+
 def test_model_rejects_an_unknown_provider(runner, fake_provider):
     result = runner.invoke(main, [], input="/model nope\nexit\n")
     assert "unknown provider 'nope'" in result.stderr

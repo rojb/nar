@@ -179,6 +179,8 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
     config = NarConfig(provider=provider_name, model=model)
     provider = factory.create_provider(config, on_retry=view.retry)
     agent.provider = provider
+    if agent.compactor is not None:
+        agent.compactor.provider = provider  # the summary must not go to the old one
     view.waiting_text = f"waiting for {provider.model}..."
     view.note(f"model: {provider.name} · {provider.model}")
 
