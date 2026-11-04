@@ -87,6 +87,38 @@ again, until the model answers without tools or `max_turns` model calls were mad
 - **System prompt:** it tells the model it is `nar`, how to use its tools, the working
   directory, OS and date, and adds the project's `AGENTS.md` when one is found.
 
+## Commands
+
+In interactive mode a line that starts with `/` is a command, not a request. Commands answer on
+standard error, so a redirected run keeps only the answer.
+
+| Command | What it does |
+|---|---|
+| `/help` | list every command with its summary |
+| `/model` | show the provider and model, or change them in place |
+| `/approval` | show the approval level, or change it in place |
+| `/clear` | start a new conversation, keeping the provider and the approval level |
+| `/config` | show the effective configuration and the file each value came from |
+| `/tools` | list the tools the model can call, including the MCP ones |
+| `/tokens` | show the tokens used, the context window and the percentage |
+| `/compact` | summarize the conversation to free context |
+| `/sessions` | list the saved sessions |
+| `/resume` | continue a saved session: `/resume [id]` |
+| `/mcp` | show the MCP servers and their tools |
+| `/exit` | leave, exactly like `exit` |
+
+- **`/model` and `/approval` change the session in place.** The conversation, the tools and the
+  session stay; only the next model call uses the new provider, and the next tool call uses the new
+  approval level. `/model ollama`, `/model ollama/qwen2.5-coder` and `/model ollama qwen2.5-coder`
+  all work; an unknown provider, or one whose API key is missing, is rejected with a one-line error
+  and the previous provider stays in use. The session file keeps the provider it was created with,
+  so a later `--resume` starts from the configuration again.
+- **Completion needs a terminal.** When standard input is a terminal the prompt completes `/`
+  commands and shows their summaries; with a pipe or a redirected file it reads a plain line and
+  everything else behaves the same, so `printf '/help\nexit\n' | nar` works.
+- **`/clear` says so**: the earlier messages are gone from the conversation and from the session
+  file, and the next request starts from the system prompt alone.
+
 ## Configuration
 
 `nar` reads two optional TOML files and merges them; project values override user values, and
@@ -106,6 +138,8 @@ nested tables (such as `mcp_servers`) are merged key by key:
 | `context_window` | whole number, at least 1000: size of the model's context in tokens | by provider (see "Long conversations") |
 | `context_threshold` | whole number from 1 to 100: percentage of the window where `nar` starts reducing the conversation | `80` |
 | `mcp_servers` | table of named MCP server definitions, `[mcp_servers.<name>]` (see "MCP servers") | empty |
+| `hooks` | table of shell commands run around the loop, `[hooks]` (see "Hooks") | empty |
+| `hook_timeout` | whole or fractional number of seconds, 1 to 600: how long each hook command gets | `10` |
 
 Example `.nar/config.toml`:
 
@@ -185,6 +219,74 @@ answer. If `nar` cannot ask because standard input or standard error is not a te
 a redirect, CI), it does not wait: the call is refused, the model is told how to allow it, and
 the run goes on, so the exit code stays 0. In that case use `--approval auto-edit` or
 `--approval yolo`, or set `approval` in `.nar/config.toml`.
+
+## Hooks
+
+A project can run its own shell command at five points of the loop. Hooks are configured per event
+in `.nar/config.toml` (or `~/.nar/config.toml`), as a list of commands run in order:
+
+```toml
+[hooks]
+after_tool = ["ruff check --fix ."]
+before_tool = ["node scripts/guard.js"]
+on_error = ["notify-send 'nar hit an error'"]
+```
+
+| Event | When it runs | Can it block? |
+|---|---|---|
+| `before_agent` | once, before the first model call of a request | no |
+| `before_tool` | before each tool call, after its approval | **yes** |
+| `after_tool` | after each tool call, with its result | no |
+| `after_agent` | once, when the request ends (answer, turn limit, loop, Ctrl+C or error) | no |
+| `on_error` | for each failing tool result and for a provider failure | no |
+
+Every hook gets one JSON object on standard input, on a single line:
+
+| Event | Fields |
+|---|---|
+| `before_agent` | `event`, `prompt`, `cwd` |
+| `before_tool` | `event`, `tool`, `arguments`, `cwd` |
+| `after_tool` | `event`, `tool`, `arguments`, `is_error`, `output` (cut at 4,000 characters), `cwd` |
+| `after_agent` | `event`, `prompt`, `outcome` (`finished`, `turn_limit`, `loop`, `cancelled`, `error`), `turns`, `cwd` |
+| `on_error` | `event`, `where` (`tool` or `provider`), `message`, `cwd` |
+
+- **A `before_tool` hook that exits with a non-zero code stops the call.** The tool does not run and
+  what the hook printed is what the model receives, so a project rule is a rule and not a
+  suggestion.
+- **A broken hook never breaks `nar`.** A command that is missing, crashes or exceeds
+  `hook_timeout` produces a warning and the request goes on; a `before_tool` hook that cannot start
+  does not block anything.
+- **What a hook prints is shown to you**, as dim lines on standard error (cut at 2,000 characters
+  per hook). The model only sees it when a `before_tool` hook blocks a call.
+- Hooks run **synchronously**, in the project folder, through the same shell the `shell` tool uses,
+  and they inherit the environment. A slow hook slows the request.
+- With no `[hooks]` table nothing runs and no extra process is started.
+
+### Example: run `ruff` after every edit
+
+`.nar/config.toml`:
+
+```toml
+[hooks]
+after_tool = ["ruff check --fix . 2>&1"]
+```
+
+Git Bash:
+
+```bash
+printf '%s\n' '[hooks]' 'after_tool = ["ruff check --fix . 2>&1"]' > .nar/config.toml
+nar "add a docstring to src/app.py"
+```
+
+PowerShell:
+
+```powershell
+Set-Content .nar/config.toml "[hooks]`nafter_tool = ['ruff check --fix . 2>&1']"
+nar "add a docstring to src/app.py"
+```
+
+After the edit, `hook after_tool: ruff check --fix . 2>&1` and ruff's own output appear on standard
+error, and the answer keeps standard output clean.
 
 ## Long conversations
 

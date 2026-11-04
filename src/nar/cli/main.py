@@ -129,7 +129,7 @@ def cli(
     instructions = load_project_instructions(cwd)
     if prompt is not None:
         return run_single(prompt, loaded.config, instructions, resumed, trust_project_tools)
-    repl.run(loaded.config, instructions, resumed, trust_project_tools)
+    repl.run(loaded.config, instructions, resumed, loaded, trust_project_tools)
     return 0
 
 

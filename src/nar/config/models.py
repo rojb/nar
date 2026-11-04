@@ -14,6 +14,16 @@ class ApprovalLevel(StrEnum):
     YOLO = "yolo"
 
 
+class HookEvent(StrEnum):
+    """The moments a project may run one of its own commands (RRG-72)."""
+
+    BEFORE_AGENT = "before_agent"
+    BEFORE_TOOL = "before_tool"
+    AFTER_TOOL = "after_tool"
+    AFTER_AGENT = "after_agent"
+    ON_ERROR = "on_error"
+
+
 class ProviderName(StrEnum):
     ANTHROPIC = "anthropic"
     OPENROUTER = "openrouter"
@@ -98,6 +108,22 @@ class NarConfig(BaseModel):
     context_window: int | None = Field(default=None, ge=1000)
     context_threshold: int = Field(default=80, ge=1, le=100)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    # Shell commands run around the loop, per event (RRG-72), and how long each gets.
+    hooks: dict[HookEvent, list[str]] = Field(default_factory=dict)
+    hook_timeout: float = Field(default=10, ge=1, le=600)
+
+    @field_validator("hooks", mode="before")
+    @classmethod
+    def _known_hook_events(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        known = [event.value for event in HookEvent]
+        for name in value:
+            if name not in known:
+                raise ValueError(
+                    f"unknown setting 'hooks.{name}': use {', '.join(known[:-1])} or {known[-1]}"
+                )
+        return {HookEvent(name): commands for name, commands in value.items()}
 
     @field_validator("mcp_servers")
     @classmethod

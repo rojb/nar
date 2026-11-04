@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from nar.config import DEFAULT_MODELS, ApprovalLevel, NarConfig, ProviderName, load_config
+from nar.config.models import HookEvent
 from nar.config.paths import project_config, user_config
 from nar.errors import ConfigError
 
@@ -437,3 +438,59 @@ def test_invalid_context_limits_name_setting_and_file(home, project, line):
         load_config(project)
     assert line.split(" ")[0] in caught.value.message
     assert str(path) in caught.value.message
+
+
+# --- hooks (RRG-72) --------------------------------------------------------------
+
+
+def test_hooks_default_to_empty_and_timeout_to_ten(home, project):
+    loaded = load_config(project)
+    assert loaded.config.hooks == {}
+    assert loaded.config.hook_timeout == 10
+    assert "hook_timeout = 10.0  (default)" in loaded.describe(project)
+
+
+def test_hooks_load_per_event_in_order(home, project):
+    write(
+        project / ".nar" / "config.toml",
+        '[hooks]\nafter_tool = ["ruff check --fix .", "true"]\non_error = ["notify.sh"]\n',
+    )
+    loaded = load_config(project)
+    assert loaded.config.hooks[HookEvent.AFTER_TOOL] == ["ruff check --fix .", "true"]
+    assert loaded.config.hooks[HookEvent.ON_ERROR] == ["notify.sh"]
+
+
+def test_hooks_merge_user_and_project_files(home, project):
+    write(home / "config.toml", '[hooks]\nbefore_tool = ["a"]\n')
+    write(project / ".nar" / "config.toml", '[hooks]\nafter_tool = ["b"]\n')
+    loaded = load_config(project)
+    assert loaded.config.hooks[HookEvent.BEFORE_TOOL] == ["a"]
+    assert loaded.config.hooks[HookEvent.AFTER_TOOL] == ["b"]
+
+
+def test_unknown_hook_event_names_the_setting_and_the_file(home, project):
+    path = write(project / ".nar" / "config.toml", '[hooks]\nbefore_tolls = ["x"]\n')
+    with pytest.raises(ConfigError) as info:
+        load_config(project)
+    assert "hooks.before_tolls" in info.value.message
+    assert str(path) in info.value.message
+
+
+def test_hook_timeout_bounds(home, project):
+    for value in ("0", "601"):
+        write(project / ".nar" / "config.toml", f"hook_timeout = {value}\n")
+        with pytest.raises(ConfigError) as info:
+            load_config(project)
+        assert "hook_timeout" in info.value.message
+
+
+def test_hook_timeout_from_the_project_file(home, project):
+    write(project / ".nar" / "config.toml", "hook_timeout = 30\n")
+    loaded = load_config(project)
+    assert loaded.config.hook_timeout == 30
+    assert "hook_timeout = 30.0  (.nar/config.toml)" in loaded.describe(project)
+
+
+def test_configuration_does_not_import_the_hook_runner(home, project):
+    code = "import sys, nar.config; assert 'nar.hooks' not in sys.modules"
+    assert subprocess.run([sys.executable, "-c", code], capture_output=True).returncode == 0

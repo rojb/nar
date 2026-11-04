@@ -34,6 +34,7 @@ from nar.providers.messages import (
 )
 from nar.tools import ToolContext
 from nar.tools.base import FailureKind, Tool, ToolResult
+from nar.tools.base import FailureKind as _FailureKind
 from nar.tools.edit_file import EditFileTool
 from nar.tools.registry import ToolRegistry
 from nar.tools.write_file import WriteFileTool
@@ -89,12 +90,14 @@ def tool_answer(*calls):
     return LLMResponse("", tuple(calls), StopReason.TOOL_CALLS)
 
 
-def make_agent(provider, *tools, max_turns=20, gate=None, detector=None):
+def make_agent(provider, *tools, max_turns=20, gate=None, detector=None, hooks=None):
     registry = ToolRegistry()
     for tool in tools:
         registry.register(tool)
     context = ContextManager("You are nar.")
-    return Agent(provider, registry, context, max_turns=max_turns, gate=gate, detector=detector)
+    return Agent(
+        provider, registry, context, max_turns=max_turns, gate=gate, detector=detector, hooks=hooks
+    )
 
 
 def run(agent, prompt="go"):
@@ -652,3 +655,116 @@ def test_a_refusal_is_not_enveloped():
     agent = make_agent(provider, EchoTool(), gate=lambda tool, arguments: refusal)
     run(agent)
     assert provider.requests[1]["messages"][-1].content == "The user rejected this echo call"
+
+
+# --- hooks (RRG-72) --------------------------------------------------------------
+
+
+class FakeHooks:
+    """Records what the loop asks for, and can refuse a call."""
+
+    def __init__(self, block=None):
+        self.calls = []
+        self.block = block
+
+    def before_agent(self, prompt):
+        self.calls.append(("before_agent", prompt))
+
+    def before_tool(self, call):
+        self.calls.append(("before_tool", call.name))
+        return self.block(call) if self.block else None
+
+    def after_tool(self, call, result):
+        self.calls.append(("after_tool", call.name, result.output))
+
+    def on_error(self, where, message):
+        self.calls.append(("on_error", where))
+
+    def after_agent(self, prompt, outcome, turns):
+        self.calls.append(("after_agent", outcome, turns))
+
+    @property
+    def names(self):
+        return [entry[0] for entry in self.calls]
+
+
+def test_hooks_run_before_the_agent_and_after_it_finishes():
+    hooks = FakeHooks()
+    provider = ScriptedProvider(LLMResponse("hi"))
+    run(make_agent(provider, EchoTool(), hooks=hooks), "hello")
+    assert hooks.calls == [
+        ("before_agent", "hello"),
+        ("after_agent", "finished", 1),
+    ]
+
+
+def test_hooks_run_around_a_tool_that_runs():
+    hooks = FakeHooks()
+    provider = ScriptedProvider(tool_answer(call("c1", text="a")), LLMResponse("done"))
+    run(make_agent(provider, EchoTool(), hooks=hooks))
+    assert hooks.names == ["before_agent", "before_tool", "after_tool", "after_agent"]
+    assert ("after_tool", "echo", "A") in hooks.calls
+
+
+def test_a_rejected_call_never_reaches_the_hooks():
+    hooks = FakeHooks()
+    refusal = ToolResult(output="The user rejected this echo call", is_error=True)
+    provider = ScriptedProvider(tool_answer(call("c1", text="a")), LLMResponse("ok"))
+    run(make_agent(provider, EchoTool(), gate=lambda tool, arguments: refusal, hooks=hooks))
+    assert "before_tool" not in hooks.names
+
+
+def test_a_blocking_hook_stops_the_tool_and_the_model_reads_its_text():
+    blocked = ToolResult(
+        output="the before_tool hook refused this call: only src/ is editable",
+        is_error=True,
+        error_kind=_FailureKind.REFUSED,
+    )
+    hooks = FakeHooks(block=lambda call: blocked)
+    tool = EchoTool()
+    provider = ScriptedProvider(tool_answer(call("c1", text="a")), LLMResponse("ok"))
+    run(make_agent(provider, tool, hooks=hooks))
+    assert tool.seen == []
+    sent = provider.requests[1]["messages"][-1].content
+    assert sent == "the before_tool hook refused this call: only src/ is editable"
+    assert "[tool error]" not in sent
+
+
+def test_on_error_runs_for_a_failing_tool():
+    hooks = FakeHooks()
+    provider = ScriptedProvider(tool_answer(call("c1", name="missing")), LLMResponse("ok"))
+    run(make_agent(provider, EchoTool(), hooks=hooks))
+    assert ("on_error", "tool") in hooks.calls
+
+
+def test_a_provider_error_reports_an_error_outcome():
+    hooks = FakeHooks()
+    provider = ScriptedProvider(ProviderError("boom", "fake"))
+    with pytest.raises(ProviderError):
+        run(make_agent(provider, EchoTool(), hooks=hooks))
+    assert ("on_error", "provider") in hooks.calls
+    assert ("after_agent", "error", 1) in hooks.calls
+
+
+def test_after_agent_reports_the_turn_limit():
+    hooks = FakeHooks()
+    provider = ScriptedProvider(
+        tool_answer(call("c1", text="a")), tool_answer(call("c2", text="b"))
+    )
+    run(make_agent(provider, EchoTool(), max_turns=2, hooks=hooks))
+    assert ("after_agent", "turn_limit", 2) in hooks.calls
+
+
+def test_after_agent_reports_a_loop_abort():
+    hooks = FakeHooks()
+    provider = ScriptedProvider(repeated(), repeated(prefix="d"), LLMResponse("never"))
+    run(make_agent(provider, EchoTool(), detector=LoopDetector(), hooks=hooks))
+    assert ("after_agent", "loop", 2) in hooks.calls
+
+
+def test_after_agent_reports_a_cancellation():
+    hooks = FakeHooks()
+    provider = ScriptedProvider(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        run(make_agent(provider, EchoTool(), hooks=hooks))
+    assert ("after_agent", "cancelled", 1) in hooks.calls
