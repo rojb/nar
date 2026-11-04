@@ -105,6 +105,8 @@ nested tables (such as `mcp_servers`) are merged key by key:
 | `context_window` | whole number, at least 1000: size of the model's context in tokens | by provider (see "Long conversations") |
 | `context_threshold` | whole number from 1 to 100: percentage of the window where `nar` starts reducing the conversation | `80` |
 | `mcp_servers` | table of named MCP server definitions, `[mcp_servers.<name>]` (see "MCP servers") | empty |
+| `hooks` | table of shell commands run around the loop, `[hooks]` (see "Hooks") | empty |
+| `hook_timeout` | whole or fractional number of seconds, 1 to 600: how long each hook command gets | `10` |
 
 Example `.nar/config.toml`:
 
@@ -184,6 +186,74 @@ answer. If `nar` cannot ask because standard input or standard error is not a te
 a redirect, CI), it does not wait: the call is refused, the model is told how to allow it, and
 the run goes on, so the exit code stays 0. In that case use `--approval auto-edit` or
 `--approval yolo`, or set `approval` in `.nar/config.toml`.
+
+## Hooks
+
+A project can run its own shell command at five points of the loop. Hooks are configured per event
+in `.nar/config.toml` (or `~/.nar/config.toml`), as a list of commands run in order:
+
+```toml
+[hooks]
+after_tool = ["ruff check --fix ."]
+before_tool = ["node scripts/guard.js"]
+on_error = ["notify-send 'nar hit an error'"]
+```
+
+| Event | When it runs | Can it block? |
+|---|---|---|
+| `before_agent` | once, before the first model call of a request | no |
+| `before_tool` | before each tool call, after its approval | **yes** |
+| `after_tool` | after each tool call, with its result | no |
+| `after_agent` | once, when the request ends (answer, turn limit, loop, Ctrl+C or error) | no |
+| `on_error` | for each failing tool result and for a provider failure | no |
+
+Every hook gets one JSON object on standard input, on a single line:
+
+| Event | Fields |
+|---|---|
+| `before_agent` | `event`, `prompt`, `cwd` |
+| `before_tool` | `event`, `tool`, `arguments`, `cwd` |
+| `after_tool` | `event`, `tool`, `arguments`, `is_error`, `output` (cut at 4,000 characters), `cwd` |
+| `after_agent` | `event`, `prompt`, `outcome` (`finished`, `turn_limit`, `loop`, `cancelled`, `error`), `turns`, `cwd` |
+| `on_error` | `event`, `where` (`tool` or `provider`), `message`, `cwd` |
+
+- **A `before_tool` hook that exits with a non-zero code stops the call.** The tool does not run and
+  what the hook printed is what the model receives, so a project rule is a rule and not a
+  suggestion.
+- **A broken hook never breaks `nar`.** A command that is missing, crashes or exceeds
+  `hook_timeout` produces a warning and the request goes on; a `before_tool` hook that cannot start
+  does not block anything.
+- **What a hook prints is shown to you**, as dim lines on standard error (cut at 2,000 characters
+  per hook). The model only sees it when a `before_tool` hook blocks a call.
+- Hooks run **synchronously**, in the project folder, through the same shell the `shell` tool uses,
+  and they inherit the environment. A slow hook slows the request.
+- With no `[hooks]` table nothing runs and no extra process is started.
+
+### Example: run `ruff` after every edit
+
+`.nar/config.toml`:
+
+```toml
+[hooks]
+after_tool = ["ruff check --fix . 2>&1"]
+```
+
+Git Bash:
+
+```bash
+printf '%s\n' '[hooks]' 'after_tool = ["ruff check --fix . 2>&1"]' > .nar/config.toml
+nar "add a docstring to src/app.py"
+```
+
+PowerShell:
+
+```powershell
+Set-Content .nar/config.toml "[hooks]`nafter_tool = ['ruff check --fix . 2>&1']"
+nar "add a docstring to src/app.py"
+```
+
+After the edit, `hook after_tool: ruff check --fix . 2>&1` and ruff's own output appear on standard
+error, and the answer keeps standard output clean.
 
 ## Long conversations
 

@@ -28,6 +28,7 @@ from nar.context import ProjectInstructions
 from nar.context.compaction import CompactionError, Compactor, ContextLimits
 from nar.context.manager import ContextManager
 from nar.errors import ProviderError
+from nar.hooks import HookRunner
 from nar.mcp import McpManager
 from nar.providers import factory
 from nar.session import Session, SessionRecorder, SessionStore, sessions_dir
@@ -56,6 +57,17 @@ def create_agent(
     registry = create_default_registry(cwd)
     prompter = TerminalPrompter(view.tools)
     limits = ContextLimits(config.context_window, config.context_threshold)
+    hooks = (
+        HookRunner(
+            config.hooks,
+            cwd,
+            timeout=config.hook_timeout,
+            note=view.note,
+            warn=view.warn,
+        )
+        if config.hooks
+        else None
+    )
     return Agent(
         provider,
         registry,
@@ -64,6 +76,7 @@ def create_agent(
         gate=approval_gate(config.approval, prompter, registry.context),
         compactor=Compactor(provider, limits),
         detector=LoopDetector(),
+        hooks=hooks,
     )
 
 
