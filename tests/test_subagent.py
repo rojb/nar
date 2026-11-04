@@ -445,7 +445,7 @@ def test_auto_edit_applies_inside_a_subagent_too(tmp_path):
 
 def test_a_before_tool_hook_blocks_a_call_of_a_subagent(tmp_path):
     python = ShellSpec(name="python", executable=sys.executable, powershell=False)
-    block = "import sys; print('no writing here'); sys.exit(1)"
+    block = "import sys; print('no writing here'); sys.exit(2)"  # 2 is the block code (RRG-82)
     hooks = HookRunner(
         {HookEvent.BEFORE_TOOL: [block]},
         tmp_path,
