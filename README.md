@@ -251,12 +251,14 @@ Every hook gets one JSON object on standard input, on a single line:
 | `after_agent` | `event`, `prompt`, `outcome` (`finished`, `turn_limit`, `loop`, `cancelled`, `error`), `turns`, `cwd` |
 | `on_error` | `event`, `where` (`tool` or `provider`), `message`, `cwd` |
 
-- **A `before_tool` hook that exits with a non-zero code stops the call.** The tool does not run and
-  what the hook printed is what the model receives, so a project rule is a rule and not a
-  suggestion.
+- **A `before_tool` hook refuses a call by exiting with code `2`.** The tool does not run and what
+  the hook printed is what the model receives, so a project rule is a rule and not a suggestion. Any
+  other non-zero code — including `1`, which the shell itself returns when the command does not
+  exist — means the hook failed: the terminal warns that it did not block and the call runs, because
+  a mistyped path must not take the tools away.
 - **A broken hook never breaks `nar`.** A command that is missing, crashes or exceeds
-  `hook_timeout` produces a warning and the request goes on; a `before_tool` hook that cannot start
-  does not block anything.
+  `hook_timeout` produces a warning and the request goes on, and a `before_tool` hook that is broken
+  or mistyped never blocks a call.
 - **What a hook prints is shown to you**, as dim lines on standard error (cut at 2,000 characters
   per hook). The model only sees it when a `before_tool` hook blocks a call.
 - Hooks run **synchronously**, in the project folder, through the same shell the `shell` tool uses,

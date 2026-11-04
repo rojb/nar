@@ -1,11 +1,13 @@
 import json
 import sys
 
+import pytest
+
 from nar.config.models import HookEvent
 from nar.hooks import HookRunner
 from nar.providers.messages import ToolCall
 from nar.tools.base import FailureKind, ToolResult
-from nar.tools.shell_process import ShellSpec
+from nar.tools.shell_process import ShellSpec, find_shell
 
 # The "shell" is this interpreter, so a hook command is Python code: the real
 # subprocess path (stdin, exit codes, output capture, timeout) with no quoting.
@@ -68,8 +70,8 @@ def test_before_tool_payload_and_a_zero_exit_lets_the_call_run(tmp_path):
     assert payload["arguments"] == {"path": "a.py"}
 
 
-def test_a_before_tool_hook_can_block_the_call(tmp_path):
-    command = "import sys; print('edits are only allowed inside src/'); sys.exit(1)"
+def test_the_block_code_refuses_the_call(tmp_path):
+    command = "import sys; print('edits are only allowed inside src/'); sys.exit(2)"
     warns = []
     hook_runner = runner({HookEvent.BEFORE_TOOL: [command]}, tmp_path, warns=warns)
     result = hook_runner.before_tool(ToolCall("c1", "edit_file", {"path": "README.md"}))
@@ -78,18 +80,46 @@ def test_a_before_tool_hook_can_block_the_call(tmp_path):
     assert result.error_kind is FailureKind.REFUSED
     assert "edits are only allowed inside src/" in result.output
     assert result.output.startswith("the before_tool hook refused this call: ")
-    assert any("failed with exit code 1" in warning for warning in warns)
+    assert any("failed with exit code 2" in warning for warning in warns)
 
 
-def test_a_hook_that_raises_blocks_with_its_own_text(tmp_path):
+def test_any_other_exit_code_does_not_block(tmp_path):
+    for code in (1, 3, 127):
+        warns = []
+        command = f"import sys; print('broken'); sys.exit({code})"
+        hook_runner = runner({HookEvent.BEFORE_TOOL: [command]}, tmp_path, warns=warns)
+        result = hook_runner.before_tool(ToolCall("c1", "edit_file", {"path": "a.py"}))
+        assert result is None, code
+        assert any(
+            f"failed with exit code {code} and did not block the call" in warning
+            for warning in warns
+        ), warns
+
+
+def test_a_missing_command_does_not_block_with_the_real_shell(tmp_path):
+    """The regression this change exists for: the shell itself exits 1 for a missing command."""
+    shell = find_shell()
+    if shell is None:
+        pytest.skip("no shell on this machine")
+    warns = []
+    hook_runner = HookRunner(
+        {HookEvent.BEFORE_TOOL: ["this-command-does-not-exist"]},
+        tmp_path,
+        timeout=20,
+        warn=warns.append,
+        shell=shell,
+    )
+    assert hook_runner.before_tool(ToolCall("c1", "edit_file", {"path": "a.py"})) is None
+    assert any("did not block the call" in warning for warning in warns), warns
+
+
+def test_a_hook_that_raises_does_not_block_the_call(tmp_path):
     warns = []
     hook_runner = runner(
         {HookEvent.BEFORE_TOOL: ["import nonexistent_module"]}, tmp_path, warns=warns
     )
-    result = hook_runner.before_tool(ToolCall("c1", "echo", {}))
-    assert result is not None and result.is_error
-    assert "ModuleNotFoundError" in result.output
-    assert any("failed with exit code 1" in warning for warning in warns)
+    assert hook_runner.before_tool(ToolCall("c1", "echo", {})) is None
+    assert any("did not block the call" in warning for warning in warns)
 
 
 def test_a_hook_that_cannot_start_is_reported_and_does_not_block(tmp_path):
@@ -99,7 +129,9 @@ def test_a_hook_that_cannot_start_is_reported_and_does_not_block(tmp_path):
         {HookEvent.BEFORE_TOOL: ["x"]}, tmp_path, warn=warns.append, shell=hook
     )
     assert hook_runner.before_tool(ToolCall("c1", "echo", {})) is None
-    assert any("could not run" in warning for warning in warns)
+    assert any(
+        "could not run" in warning and "did not block the call" in warning for warning in warns
+    )
 
 
 def test_a_hook_that_hangs_is_killed_and_does_not_block(tmp_path):

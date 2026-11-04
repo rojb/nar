@@ -23,6 +23,9 @@ from nar.tools.shell_process import ShellSpec, build_argv, find_shell, run_comma
 OUTPUT_IN_PAYLOAD = 4_000
 # What the user sees of a hook's own output, per hook.
 OUTPUT_SHOWN = 2_000
+# The only exit code that refuses a call. Not 1: the shell itself returns 1 when the
+# command does not exist, so a typo would look exactly like a deliberate refusal.
+BLOCK_EXIT_CODE = 2
 
 Note = Callable[[str], None]
 
@@ -46,6 +49,11 @@ class HookOutcome:
     @property
     def ok(self) -> bool:
         return self.error is None and not self.timed_out and self.exit_code == 0
+
+    @property
+    def blocks(self) -> bool:
+        """Only the block code refuses a call; everything else lets it run."""
+        return self.error is None and not self.timed_out and self.exit_code == BLOCK_EXIT_CODE
 
 
 def _cut(text: str, limit: int) -> str:
@@ -107,7 +115,7 @@ class HookRunner:
             HookEvent.BEFORE_TOOL,
             {"event": "before_tool", "tool": call.name, "arguments": dict(call.arguments)},
         )
-        blocking = [outcome for outcome in outcomes if outcome.failed]
+        blocking = [outcome for outcome in outcomes if outcome.blocks]
         if not blocking:
             return None
         text = "\n".join(
@@ -163,19 +171,30 @@ class HookRunner:
 
     def _report(self, outcome: HookOutcome) -> None:
         event = outcome.event.value
+        # A before_tool hook that did not use the block code let the call run: say so, or the
+        # user would think the project's rule applied.
+        unblocked = (
+            " and did not block the call"
+            if outcome.event is HookEvent.BEFORE_TOOL and not outcome.blocks
+            else ""
+        )
         if outcome.error is not None:
-            self.warn(f"warning: hook {event} could not run: {outcome.error}: {outcome.command}")
+            self.warn(
+                f"warning: hook {event} could not run: {outcome.error}{unblocked}: "
+                f"{outcome.command}"
+            )
             return
         if outcome.timed_out:
             self.warn(
-                f"warning: hook {event} timed out after {self.timeout:g} s: {outcome.command}"
+                f"warning: hook {event} timed out after {self.timeout:g} s{unblocked}: "
+                f"{outcome.command}"
             )
             self._show(outcome)
             return
         if outcome.exit_code != 0:
             self.warn(
-                f"warning: hook {event} failed with exit code {outcome.exit_code}: "
-                f"{outcome.command}"
+                f"warning: hook {event} failed with exit code {outcome.exit_code}"
+                f"{unblocked}: {outcome.command}"
             )
             self._show(outcome)
             return
