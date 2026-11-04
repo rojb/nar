@@ -1,7 +1,9 @@
+import pytest
+
 from nar.context.manager import ContextManager
 from nar.providers.messages import Message
 from nar.session.recorder import SessionRecorder
-from nar.session.store import Session, SessionStore
+from nar.session.store import Session, SessionFileError, SessionStore
 
 
 def setup(tmp_path, store=None):
@@ -76,3 +78,38 @@ def test_switch_moves_later_saves_to_the_new_session(tmp_path):
     recorder.save()
     assert store.load("other").messages[-1] == Message.user("more")
     assert store.load(first.id).messages == (Message.user("first session"),)
+
+
+def test_restore_discards_later_messages_and_keeps_later_checkpoints(tmp_path):
+    recorder, store, context, _ = setup(tmp_path)
+    context.add_user("first")
+    recorder.checkpoint("base")
+    context.add_user("second")
+    recorder.checkpoint("later")
+    checkpoint = recorder.restore("base")
+    assert checkpoint.name == "base"
+    assert context.messages == (Message.user("first"),)
+    assert store.load(recorder.session.id).messages == (Message.user("first"),)
+    assert [c.name for c in recorder.checkpoints()] == ["base", "later"]
+
+
+def test_restore_of_an_unknown_reference_changes_nothing(tmp_path):
+    recorder, store, context, _ = setup(tmp_path)
+    context.add_user("first")
+    recorder.save()
+    with pytest.raises(SessionFileError):
+        recorder.restore("nope")
+    assert context.messages == (Message.user("first"),)
+    assert store.load(recorder.session.id).messages == (Message.user("first"),)
+
+
+def test_checkpoints_follow_the_session_after_a_switch(tmp_path):
+    recorder, store, context, _ = setup(tmp_path)
+    context.add_user("first")
+    recorder.checkpoint("base")
+    first = recorder.session
+    other = Session("other", "a", "a", "/x", "p", "m", (Message.user("other"),))
+    recorder.switch(other)
+    assert recorder.checkpoints() == []
+    recorder.switch(first)
+    assert [c.name for c in recorder.checkpoints()] == ["base"]

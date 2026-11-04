@@ -163,6 +163,7 @@ def test_registered_commands_can_be_added_and_receive_their_argument(monkeypatch
     slash.dispatch("/nope", context)
     assert "/echo" in err.getvalue()
     assert "/mcp" in err.getvalue()
+    assert "/restore" in err.getvalue()
 
 
 def test_compact_replaces_the_history_and_shows_the_sizes():
@@ -298,3 +299,127 @@ def test_resume_with_a_bad_id_keeps_the_session(session_context, argument):
     assert "error:" in context.err.file.getvalue()
     assert context.recorder.session.id == "current"
     assert conversation.messages == (Message.user("current"),)
+
+
+# /checkpoint, /checkpoints and /restore (RRG-77)
+
+
+def test_checkpoint_saves_and_shows_the_number_and_name(session_context):
+    context, _, _, _ = session_context
+    assert slash.dispatch("/checkpoint before refactor", context) is True
+    assert "checkpoint 1 saved: before refactor (1 messages)" in context.err.file.getvalue()
+    assert context.agent.provider.calls == 0
+
+
+def test_checkpoint_without_a_name(session_context):
+    context, _, _, _ = session_context
+    slash.dispatch("/checkpoint", context)
+    assert "checkpoint 1 saved (1 messages)" in context.err.file.getvalue()
+
+
+def test_checkpoint_of_an_empty_conversation_saves_nothing(session_context):
+    context, store, conversation, _ = session_context
+    conversation.replace_messages([])
+    slash.dispatch("/checkpoint", context)
+    assert "there is nothing to save yet" in context.err.file.getvalue()
+    assert not (store.directory / "checkpoints").exists()
+
+
+@pytest.mark.parametrize("name", ["base", "123", "x" * 61])
+def test_invalid_names_are_errors_that_save_nothing(session_context, name):
+    context, _, _, _ = session_context
+    slash.dispatch("/checkpoint base", context)
+    slash.dispatch(f"/checkpoint {name}", context)
+    assert "error:" in context.err.file.getvalue()
+    assert len(context.recorder.checkpoints()) == 1
+
+
+def test_checkpoints_lists_this_session_only(session_context):
+    context, store, conversation, project = session_context
+    slash.dispatch("/checkpoints", context)
+    assert "this session has no checkpoints" in context.console.file.getvalue()
+    slash.dispatch("/checkpoint base", context)
+    store.save(other_session("other", project))
+    slash.dispatch("/resume other", context)
+    context.console.file.truncate(0)
+    context.console.file.seek(0)
+    slash.dispatch("/checkpoints", context)
+    assert "this session has no checkpoints" in context.console.file.getvalue()
+    assert context.agent.provider.calls == 0
+
+
+def test_restore_discards_later_messages_in_the_context_and_the_file(session_context):
+    context, store, conversation, _ = session_context
+    slash.dispatch("/checkpoint base", context)
+    conversation.add_user("later request")
+    context.recorder.save()
+    assert slash.dispatch("/restore base", context) is True
+    assert conversation.messages == (Message.user("current"),)
+    assert store.load("current").messages == (Message.user("current"),)
+    shown = context.err.file.getvalue()
+    assert "restored checkpoint 1: the conversation now has 1 messages" in shown
+    assert "files changed by tools were not restored" in shown
+    assert context.agent.provider.calls == 0
+
+
+def test_restoring_a_later_checkpoint_undoes_a_restore(session_context):
+    context, _, conversation, _ = session_context
+    slash.dispatch("/checkpoint", context)
+    conversation.add_user("second")
+    slash.dispatch("/checkpoint", context)
+    slash.dispatch("/restore 1", context)
+    slash.dispatch("/restore 2", context)
+    assert conversation.messages[-1] == Message.user("second")
+
+
+def test_restore_after_a_compaction_brings_back_the_messages(session_context):
+    context, _, conversation, _ = session_context
+    conversation.replace_messages(HISTORY)
+    slash.dispatch("/checkpoint", context)
+    slash.dispatch("/compact", context)
+    assert conversation.messages != HISTORY
+    slash.dispatch("/restore 1", context)
+    assert conversation.messages == HISTORY
+
+
+@pytest.mark.parametrize("argument", ["", "9", "nope"])
+def test_restore_of_something_unknown_changes_nothing(session_context, argument):
+    context, _, conversation, _ = session_context
+    slash.dispatch("/checkpoint base", context)
+    conversation.add_user("later")
+    slash.dispatch(f"/restore {argument}", context)
+    assert "error:" in context.err.file.getvalue()
+    assert conversation.messages[-1] == Message.user("later")
+
+
+def test_a_corrupt_checkpoint_file_is_an_error_and_is_not_overwritten(session_context):
+    context, store, conversation, _ = session_context
+    folder = store.directory / "checkpoints"
+    folder.mkdir()
+    path = folder / "current.json"
+    path.write_text("not json", encoding="utf-8")
+    for line in ("/checkpoint", "/checkpoints", "/restore 1"):
+        assert slash.dispatch(line, context) is True
+    assert context.err.file.getvalue().count(str(path)) == 3
+    assert path.read_text(encoding="utf-8") == "not json"
+    assert conversation.messages == (Message.user("current"),)
+
+
+def test_a_checkpoint_that_cannot_be_written_is_an_error(session_context, monkeypatch):
+    context, _, conversation, _ = session_context
+
+    def fail(*args):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr("nar.session.checkpoints.write_private", fail)
+    assert slash.dispatch("/checkpoint", context) is True
+    assert "cannot save the checkpoint: Permission denied" in context.err.file.getvalue()
+    assert conversation.messages == (Message.user("current"),)
+
+
+def test_checkpoint_files_do_not_appear_as_sessions(session_context):
+    context, store, _, _ = session_context
+    slash.dispatch("/checkpoint base", context)
+    sessions, invalid = store.list()
+    assert [s.id for s in sessions] == ["current"]
+    assert invalid == 0

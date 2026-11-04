@@ -666,6 +666,29 @@ def test_resume_of_a_corrupt_file_names_it_and_leaves_it(runner, workdir):
     assert path.read_text(encoding="utf-8") == "not json"
 
 
+def test_a_request_after_a_restore_sends_the_checkpoint_messages_only(
+    runner, workdir, fake_provider
+):
+    fake_provider.script = [LLMResponse("one"), LLMResponse("two"), LLMResponse("three")]
+    lines = "first\n/checkpoint base\nsecond\n/restore base\nthird\nexit\n"
+    result = runner.invoke(main, [], input=lines)
+    assert result.exit_code == 0
+    assert [m.content for m in fake_provider.requests[-1]] == ["first", "one", "third"]
+    (session,) = saved_sessions(workdir)
+    assert [m.content for m in session.messages] == ["first", "one", "third", "three"]
+
+
+def test_a_checkpoint_is_available_after_resuming(runner, workdir, fake_provider):
+    fake_provider.script = [LLMResponse("one"), LLMResponse("two")]
+    runner.invoke(main, [], input="first\n/checkpoint base\nsecond\nexit\n")
+    result = runner.invoke(main, ["--resume"], input="/checkpoints\n/restore base\nexit\n")
+    assert result.exit_code == 0
+    assert "base" in result.stdout
+    assert "restored checkpoint 1" in result.stderr
+    (session,) = saved_sessions(workdir)
+    assert [m.content for m in session.messages] == ["first", "one"]
+
+
 def test_help_does_not_load_the_session_code():
     code = (
         "import sys; from nar.cli import main\n"
