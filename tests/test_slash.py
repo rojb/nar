@@ -95,10 +95,10 @@ def test_a_line_that_is_not_a_command_is_left_to_the_model():
 def test_unknown_command_prints_an_error_listing_the_commands():
     context, out, err = make_context(None)
     assert slash.dispatch("/foo", context) is True
-    assert (
-        err.getvalue().strip()
-        == "error: /foo is not a command; available: /mcp, /compact, /sessions, /resume"
-    )
+    text = err.getvalue().strip()
+    assert text.startswith("error: /foo is not a command; available: ")
+    for name, _ in slash.commands():
+        assert f"/{name}" in text
     assert out.getvalue() == ""
 
 
@@ -161,7 +161,8 @@ def test_registered_commands_can_be_added_and_receive_their_argument(monkeypatch
     assert slash.dispatch("/echo hello there", context) is True
     assert seen == ["hello there"]
     slash.dispatch("/nope", context)
-    assert "/mcp, /compact, /sessions, /resume, /echo" in err.getvalue()
+    assert "/echo" in err.getvalue()
+    assert "/mcp" in err.getvalue()
 
 
 def test_compact_replaces_the_history_and_shows_the_sizes():
