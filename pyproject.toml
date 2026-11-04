@@ -17,6 +17,7 @@ dependencies = [
     "markdownify>=0.13",
     "mcp>=2.3,<3",
     "openai>=3",
+    "prompt-toolkit>=3",
     "pydantic>=2",
     "rich>=13",
 ]

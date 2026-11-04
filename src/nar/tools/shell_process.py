@@ -123,6 +123,19 @@ class StreamCapture:
         return text.replace("\r\n", "\n")
 
 
+def _write_stdin(pipe: BinaryIO, text: str) -> None:
+    """Write ``text`` and close the pipe, ignoring a child that stopped reading."""
+    try:
+        pipe.write(text.encode("utf-8"))
+    except (BrokenPipeError, OSError):
+        pass
+    finally:
+        try:
+            pipe.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+
 def kill_tree(proc: subprocess.Popen) -> None:
     """Kill the process and everything it started; errors are ignored."""
     try:
@@ -151,8 +164,12 @@ class RunResult:
     timed_out: bool
 
 
-def run_command(argv: list[str], cwd: Path, timeout: float) -> RunResult:
+def run_command(
+    argv: list[str], cwd: Path, timeout: float, *, stdin_text: str | None = None
+) -> RunResult:
     """Run ``argv`` in ``cwd`` and wait at most ``timeout`` seconds.
+
+    ``stdin_text`` is written to the child's standard input, which is closed after it.
 
     Raises ``OSError`` when the program cannot start. On any ``BaseException`` while
     waiting (Ctrl+C above all) the process tree is killed before re-raising.
@@ -164,11 +181,15 @@ def run_command(argv: list[str], cwd: Path, timeout: float) -> RunResult:
     proc = subprocess.Popen(
         argv,
         cwd=cwd,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         **isolation,
     )
+    if stdin_text is not None and proc.stdin is not None:
+        # A hook may echo more than the pipe buffer holds, so the write cannot block the wait.
+        writer = threading.Thread(target=_write_stdin, args=(proc.stdin, stdin_text), daemon=True)
+        writer.start()
     stdout, stderr = StreamCapture(), StreamCapture()
     readers = [
         threading.Thread(target=capture.drain, args=(pipe,), daemon=True)

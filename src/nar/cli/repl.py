@@ -22,6 +22,7 @@ def run(
     config: NarConfig,
     instructions: ProjectInstructions | None = None,
     resumed: Session | None = None,
+    loaded: object | None = None,
 ) -> None:
     """Read requests until ``exit``, end-of-input or Ctrl+C at the prompt.
 
@@ -29,6 +30,7 @@ def run(
     """
     # Imported here: the provider SDKs are slow to import.
     from nar.cli import slash
+    from nar.cli.prompt import read_line
     from nar.cli.runner import (
         connect_mcp,
         create_agent,
@@ -49,10 +51,12 @@ def run(
         if resumed is not None:
             render_history(agent.context.messages, view.err)
             show_context_usage(agent, view)
-        commands = slash.SlashContext(mcp, view.out, view.err, agent, view, recorder)
+        commands = slash.SlashContext(
+            mcp, view.out, view.err, agent, view, recorder, loaded, Path.cwd()
+        )
         while True:
             try:
-                line = input(PROMPT)
+                line = read_line(PROMPT)
             except (EOFError, KeyboardInterrupt):
                 click.echo()
                 return

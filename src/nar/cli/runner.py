@@ -23,11 +23,12 @@ from nar.agent import (
     approval_gate,
     build_system_prompt,
 )
-from nar.config import NarConfig
+from nar.config import NarConfig, ProviderName
 from nar.context import ProjectInstructions
 from nar.context.compaction import CompactionError, Compactor, ContextLimits
 from nar.context.manager import ContextManager
-from nar.errors import ProviderError
+from nar.errors import NarError, ProviderError
+from nar.hooks import HookRunner
 from nar.mcp import McpManager
 from nar.providers import factory
 from nar.session import Session, SessionRecorder, SessionStore, sessions_dir
@@ -56,6 +57,17 @@ def create_agent(
     registry = create_default_registry(cwd)
     prompter = TerminalPrompter(view.tools)
     limits = ContextLimits(config.context_window, config.context_threshold)
+    hooks = (
+        HookRunner(
+            config.hooks,
+            cwd,
+            timeout=config.hook_timeout,
+            note=view.note,
+            warn=view.warn,
+        )
+        if config.hooks
+        else None
+    )
     return Agent(
         provider,
         registry,
@@ -64,6 +76,7 @@ def create_agent(
         gate=approval_gate(config.approval, prompter, registry.context),
         compactor=Compactor(provider, limits),
         detector=LoopDetector(),
+        hooks=hooks,
     )
 
 
@@ -133,6 +146,42 @@ def continue_session(
             f"continuing with {provider.name} / {provider.model}"
         )
     recorder.switch(replace(session, cwd=str(cwd), provider=provider.name, model=provider.model))
+
+
+def clear_conversation(agent: Agent, recorder: SessionRecorder | None) -> None:
+    """``/clear``: the conversation keeps only the system prompt; the session follows."""
+    agent.context.replace_messages(())
+    if recorder is not None:
+        recorder.save()
+
+
+def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
+    """``/model``: build the new provider first, and assign it only when it works."""
+    provider_name, model = _model_spec(spec)
+    config = NarConfig(provider=provider_name, model=model)
+    provider = factory.create_provider(config, on_retry=view.retry)
+    agent.provider = provider
+    view.waiting_text = f"waiting for {provider.model}..."
+    view.note(f"model: {provider.name} · {provider.model}")
+
+
+def _model_spec(spec: str) -> tuple[ProviderName, str | None]:
+    """``ollama``, ``ollama/qwen2.5-coder`` or ``ollama qwen2.5-coder``."""
+    text = spec.strip()
+    if not text:
+        raise NarError("say which provider to switch to")
+    if len(text.split(None, 1)) == 2:
+        name, model = text.split(None, 1)
+    elif "/" in text:
+        name, _, model = text.partition("/")
+    else:
+        name, model = text, ""
+    try:
+        provider = ProviderName(name.strip())
+    except ValueError:
+        allowed = ", ".join(option.value for option in ProviderName)
+        raise NarError(f"unknown provider '{name.strip()}'; use {allowed}") from None
+    return provider, model.strip() or None
 
 
 def show_context_usage(agent: Agent, view: AgentView) -> None:

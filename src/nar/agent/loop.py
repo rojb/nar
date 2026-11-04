@@ -26,6 +26,7 @@ from nar.context.compaction import CompactionError, Compactor
 from nar.context.manager import ContextManager, estimate_tokens
 from nar.context.pruning import prune_tool_results, shorten_unseen_results
 from nar.errors import ProviderError
+from nar.hooks import HookRunner
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
 from nar.tools.base import FailureKind, Tool, ToolResult
@@ -48,6 +49,7 @@ class Agent:
         gate: ToolGate | None = None,
         compactor: Compactor | None = None,
         detector: LoopDetector | None = None,
+        hooks: HookRunner | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -56,6 +58,7 @@ class Agent:
         self.gate = gate
         self.compactor = compactor
         self.detector = detector
+        self.hooks = hooks
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:
         """Handle one user request, yielding what happens.
@@ -67,9 +70,14 @@ class Agent:
             self.detector.reset()
         mark = self.context.mark()
         completed = False
+        outcome = "cancelled"
+        turns = 0
         try:
+            if self.hooks is not None:
+                self.hooks.before_agent(prompt)
             self.context.add_user(prompt)
             for turn in range(1, self.max_turns + 1):
+                turns = turn
                 yield from self._manage_context(prompt)
                 yield ModelCallStarted(turn)
                 response = yield from self._call_model()
@@ -78,11 +86,13 @@ class Agent:
                     yield AnswerCutOff(self.provider.model)
                 if not response.tool_calls:
                     completed = True
+                    outcome = "finished"
                     yield RequestFinished(response)
                     return
                 if turn == self.max_turns:
                     self._skip_tool_calls(response.tool_calls)
                     completed = True
+                    outcome = "turn_limit"
                     yield TurnLimitReached(self.max_turns)
                     return
                 for call in response.tool_calls:
@@ -94,13 +104,21 @@ class Agent:
                 finding = self.detector.check() if self.detector is not None else None
                 if finding is not None and finding.decision is Decision.STOP:
                     completed = True  # every call has its result, so the history stays valid
+                    outcome = "loop"
                     yield LoopAborted(finding.kind, finding.call, finding.count)
                     return
                 if finding is not None:
                     self.context.add_user(warning_text(finding))
                     self.detector.reset_tail()
                     yield LoopDetected(finding.kind, finding.call, finding.count)
+        except ProviderError:
+            outcome = "error"
+            if self.hooks is not None:
+                self.hooks.on_error("provider", "the provider failed during the request")
+            raise
         finally:
+            if self.hooks is not None:
+                self.hooks.after_agent(prompt, outcome, turns)
             if not completed:
                 self.context.rollback(mark)
 
@@ -168,7 +186,16 @@ class Agent:
             refusal = self.gate(self.registry.get(call.name), call.arguments)
             if refusal is not None:
                 return refusal
-        return self.registry.execute(call.name, call.arguments)
+        if self.hooks is not None:
+            blocked = self.hooks.before_tool(call)  # a hook only sees a call that will run
+            if blocked is not None:
+                return blocked
+        result = self.registry.execute(call.name, call.arguments)
+        if self.hooks is not None:
+            self.hooks.after_tool(call, result)
+            if result.is_error:
+                self.hooks.on_error("tool", result.output)
+        return result
 
     def _skip_tool_calls(self, calls: tuple[ToolCall, ...]) -> None:
         """Answer calls that will not run, so the history stays valid for providers."""

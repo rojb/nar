@@ -1193,3 +1193,129 @@ def test_a_loop_in_interactive_mode_returns_to_the_prompt(runner, fake_provider)
     assert "stopped: the agent kept repeating list_dir after the warning" in result.stderr
     assert "second answer" in result.stdout
     assert [message.content for message in fake_provider.requests[2]][-1] == "second"
+
+
+# --- TUI commands (RRG-78) -------------------------------------------------------
+
+
+def test_help_lists_every_command_on_stderr_only(runner, fake_provider):
+    result = runner.invoke(main, [], input="/help\nexit\n")
+    assert result.exit_code == 0
+    text = result.stderr
+    names = [
+        "approval",
+        "clear",
+        "compact",
+        "config",
+        "exit",
+        "help",
+        "mcp",
+        "model",
+        "resume",
+        "sessions",
+        "tokens",
+        "tools",
+    ]
+    positions = [text.index(f"/{name}") for name in names]
+    assert positions == sorted(positions)
+    assert "/compact" not in result.stdout  # commands answer on standard error only
+    assert fake_provider.requests == []
+
+
+def test_model_alone_shows_the_current_one(runner, fake_provider):
+    result = runner.invoke(main, [], input="/model\nexit\n")
+    assert "provider fake, model fake-model" in result.stderr
+    assert fake_provider.requests == []
+
+
+def test_model_switches_and_the_conversation_continues(runner, monkeypatch):
+    first, second = FakeProvider(), FakeProvider()
+    created = []
+
+    def create(config, on_retry=None):
+        provider = (first, second)[min(len(created), 1)]
+        provider.config, provider.on_retry = config, on_retry
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr("nar.providers.factory.create_provider", create)
+    first.script = [LLMResponse("the code name is GATO-42")]
+    second.script = [LLMResponse("it was GATO-42")]
+    result = runner.invoke(
+        main, [], input="give me a code name\n/model ollama\nwhat was it?\nexit\n"
+    )
+    assert result.exit_code == 0
+    assert len(created) == 2
+    assert created[1].config.provider.value == "ollama"
+    assert [message.content for message in second.requests[0]][0] == "give me a code name"
+    assert "it was GATO-42" in result.stdout
+
+
+def test_model_rejects_an_unknown_provider(runner, fake_provider):
+    result = runner.invoke(main, [], input="/model nope\nexit\n")
+    assert "unknown provider 'nope'" in result.stderr
+    assert "anthropic, openrouter, ollama, deepseek" in result.stderr
+    assert fake_provider.requests == []
+
+
+def test_approval_shows_changes_and_rejects_levels(runner, fake_provider):
+    result = runner.invoke(main, [], input="/approval\n/approval yolo\n/approval nope\nexit\n")
+    assert "approval ask" in result.stderr
+    assert "approval yolo" in result.stderr
+    assert "unknown approval level 'nope'" in result.stderr
+
+
+def test_approval_yolo_runs_a_tool_without_asking(runner, fake_provider):
+    fake_provider.script = [
+        LLMResponse("", (ToolCall("c1", "shell", {"command": "echo hi"}),), StopReason.TOOL_CALLS),
+        LLMResponse("done"),
+    ]
+    result = runner.invoke(main, [], input="/approval yolo\nrun it\nexit\n")
+    assert result.exit_code == 0
+    assert "hi" in fake_provider.requests[1][-1].content
+
+
+def test_config_shows_values_and_hides_secrets(runner, workdir, fake_provider):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text(
+        '[mcp_servers.demo]\nurl = "https://example.com/mcp"\nenabled = false\n'
+        '[mcp_servers.demo.headers]\nX-Team = "abc123"\n',
+        encoding="utf-8",
+    )
+    result = runner.invoke(main, [], input="/config\nexit\n")
+    assert "provider = openrouter" in result.stderr
+    assert "abc123" not in result.stderr
+    assert "********" in result.stderr
+
+
+def test_tools_lists_the_built_in_tools(runner, fake_provider):
+    result = runner.invoke(main, [], input="/tools\nexit\n")
+    assert "read_file:" in result.stderr
+    assert "shell:" in result.stderr
+    assert "read_file:" not in result.stdout
+
+
+def test_tokens_shows_the_usage_line(runner, fake_provider):
+    result = runner.invoke(main, [], input="/tokens\nexit\n")
+    assert "context: " in result.stderr
+    assert "tokens (" in result.stderr
+
+
+def test_clear_empties_the_conversation(runner, fake_provider):
+    fake_provider.script = [LLMResponse("first answer"), LLMResponse("second answer")]
+    result = runner.invoke(main, [], input="first\n/clear\nsecond\nexit\n")
+    assert "cleared:" in result.stderr
+    assert [message.content for message in fake_provider.requests[1]] == ["second"]
+
+
+def test_clear_leaves_no_earlier_message_in_the_session_file(runner, fake_provider, tmp_path):
+    fake_provider.script = [LLMResponse("first answer")]
+    runner.invoke(main, [], input="first\n/clear\nexit\n")
+    sessions = tmp_path / "nar-home" / "sessions"
+    for path in sessions.glob("*.json"):
+        assert "first answer" not in path.read_text(encoding="utf-8")
+
+
+def test_exit_command_leaves_with_code_zero(runner, fake_provider):
+    result = runner.invoke(main, [], input="/exit\n")
+    assert result.exit_code == 0
