@@ -39,6 +39,8 @@ class SlashContext:
     agent: Agent | None = None
     view: AgentView | None = None
     recorder: SessionRecorder | None = None
+    loaded: object | None = None  # LoadedConfig; only /config reads it
+    cwd: Path | None = None
 
 
 Handler = Callable[[SlashContext, str], None]
@@ -49,6 +51,11 @@ _COMMANDS: dict[str, tuple[Handler, str]] = {}
 def register_command(name: str, handler: Handler, summary: str) -> None:
     """Make ``/<name>`` run ``handler(context, argument_text)``."""
     _COMMANDS[name] = (handler, summary)
+
+
+def commands() -> list[tuple[str, str]]:
+    """Every registered command with its summary, alphabetical."""
+    return sorted((name, entry[1]) for name, entry in _COMMANDS.items())
 
 
 def parse_slash(line: str) -> tuple[str, str] | None:
@@ -135,3 +142,7 @@ register_command("mcp", _mcp_command, "show the MCP servers and their tools")
 register_command("compact", _compact_command, "summarize the conversation to free context")
 register_command("sessions", _sessions_command, "list the saved sessions")
 register_command("resume", _resume_command, "continue a saved session: /resume [id]")
+
+
+# Imported last on purpose: it registers the base commands and needs the table above.
+from nar.cli import commands as _base_commands  # noqa: E402, F401
