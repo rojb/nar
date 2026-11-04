@@ -50,8 +50,8 @@ nar --show-config        # print the effective configuration and where each valu
 ```
 
 In interactive mode, empty lines are ignored; `exit`, end-of-input (Ctrl+D, or Ctrl+Z then Enter
-on Windows) and Ctrl+C at the prompt end the session with exit code 0. A line such as `/mcp`, `/compact` or `/sessions` is a
-command and is not sent to the model (see "MCP servers", "Long conversations" and "Sessions"); a path such as `/etc/hosts` is not a
+on Windows) and Ctrl+C at the prompt end the session with exit code 0. A line such as `/mcp`, `/compact`, `/sessions` or `/checkpoint` is a
+command and is not sent to the model (see "MCP servers", "Long conversations", "Sessions" and "Checkpoints"); a path such as `/etc/hosts` is not a
 command and is sent as a request.
 
 ## How the agent works
@@ -250,6 +250,27 @@ saved. If two `nar` processes use the same session, the last save wins.
 output, which can include secrets.** On Linux and macOS only you can read them; on Windows they
 rely on the permissions of your user folder. `nar` never removes them: delete the files you no
 longer want. If a session cannot be saved, `nar` warns and keeps working.
+
+## Checkpoints
+
+A **session** is the whole conversation. A **checkpoint** is a point inside it that you can go
+back to. In interactive mode:
+
+| Command | What it does |
+|---|---|
+| `/checkpoint [name]` | Save the conversation at this point, with a number and an optional name |
+| `/checkpoints` | List the checkpoints of this session |
+| `/restore <id or name>` | Go back: later messages are discarded and the agent continues from there |
+
+**Only the conversation goes back. Files changed by tools and commands already run stay as they
+are**, so the model may remember less than what is on disk; ask it to read the files again if it
+matters.
+
+Messages after the last checkpoint are lost on a restore, so save a checkpoint first if you may
+want them. Later checkpoints are kept, so `/restore 2` after `/restore 1` undoes the restore.
+Checkpoints last with their session and are available again after `nar --resume` or `/resume`. They
+are saved in `~/.nar/sessions/checkpoints/<session id>.json`, in plain text like sessions, with the
+same permissions; `nar` never removes them.
 
 ## Providers
 

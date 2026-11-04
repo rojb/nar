@@ -3,8 +3,9 @@ import io
 from rich.console import Console
 
 from nar.providers.messages import Message, ToolCall
+from nar.session.checkpoints import Checkpoint
 from nar.session.store import Session
-from nar.ui.session_view import render_history, render_sessions
+from nar.ui.session_view import render_checkpoints, render_history, render_sessions
 
 
 def console():
@@ -89,3 +90,22 @@ def test_no_sessions_says_so():
     err, _ = console()
     render_sessions([], None, 0, out, err)
     assert "no saved sessions" in buffer.getvalue()
+
+
+def test_checkpoints_list_in_order_with_details():
+    out, buffer = console()
+    stamp = "2026-11-04T12:00:00+00:00"
+    message = (Message.user("hi"),)
+    render_checkpoints(
+        [Checkpoint(1, "[red]base[/red]", stamp, message), Checkpoint(2, "", stamp, message)], out
+    )
+    first, second = buffer.getvalue().splitlines()
+    assert first.startswith("1  2026-11-0")
+    assert first.endswith("1 messages  [red]base[/red]")
+    assert second.endswith("1 messages")
+
+
+def test_no_checkpoints_says_so():
+    out, buffer = console()
+    render_checkpoints([], out)
+    assert "this session has no checkpoints" in buffer.getvalue()

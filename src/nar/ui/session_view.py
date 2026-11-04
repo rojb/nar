@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.text import Text
 
 from nar.providers.messages import Message
+from nar.session.checkpoints import Checkpoint
 from nar.session.store import Session
 
 MAX_MESSAGES_SHOWN = 20
@@ -60,6 +61,17 @@ def render_sessions(
         _print(console, f"({hidden} older sessions not shown)", "dim")
     if invalid:
         _print(err, f"warning: {invalid} session files are not valid and were left out", "yellow")
+
+
+def render_checkpoints(checkpoints: Sequence[Checkpoint], console: Console) -> None:
+    if not checkpoints:
+        _print(console, "this session has no checkpoints")
+    for checkpoint in checkpoints:
+        _print(
+            console,
+            f"{checkpoint.id}  {_local_date(checkpoint.created_at)}  "
+            f"{len(checkpoint.messages)} messages  {checkpoint.name}".rstrip(),
+        )
 
 
 def _print(console: Console, text: str, style: str = "") -> None:

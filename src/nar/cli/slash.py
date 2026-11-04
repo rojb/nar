@@ -1,4 +1,4 @@
-"""Slash commands of interactive mode (``/mcp``, ``/compact``, ``/sessions``, ``/resume``).
+"""Slash commands of interactive mode.
 
 A deliberately small table: later changes replace ``parse_slash`` and ``dispatch`` with a
 fuller router (completion, ``/help``, ...) and keep ``register_command`` as the way a
@@ -131,7 +131,63 @@ def _resume_command(context: SlashContext, argument: str) -> None:
     show_context_usage(context.agent, view)
 
 
+def _checkpoint_command(context: SlashContext, argument: str) -> None:
+    from nar.errors import NarError
+
+    view = context.view
+    if not context.agent.context.messages:
+        view.error("there is nothing to save yet")
+        return
+    try:
+        checkpoint = context.recorder.checkpoint(argument)
+    except NarError as exc:
+        view.error(exc.message)
+    except OSError as exc:
+        view.error(f"cannot save the checkpoint: {exc.strerror or exc}")
+    else:
+        label = f"checkpoint {checkpoint.id} saved"
+        if checkpoint.name:
+            label += f": {checkpoint.name}"
+        view.note(f"{label} ({len(checkpoint.messages)} messages)")
+
+
+def _checkpoints_command(context: SlashContext, argument: str) -> None:
+    from nar.errors import NarError
+    from nar.ui.session_view import render_checkpoints
+
+    try:
+        checkpoints = context.recorder.checkpoints()
+    except NarError as exc:
+        context.view.error(exc.message)
+        return
+    render_checkpoints(checkpoints, context.console)
+
+
+def _restore_command(context: SlashContext, argument: str) -> None:
+    # Imported here: the runner pulls in the provider SDKs.
+    from nar.cli.runner import show_context_usage
+    from nar.errors import NarError
+
+    view = context.view
+    if not argument:
+        view.error("use /restore <id or name>; /checkpoints lists them")
+        return
+    try:
+        checkpoint = context.recorder.restore(argument)
+    except NarError as exc:
+        view.error(exc.message)
+        return
+    view.note(
+        f"restored checkpoint {checkpoint.id}: the conversation now has "
+        f"{len(checkpoint.messages)} messages; files changed by tools were not restored"
+    )
+    show_context_usage(context.agent, view)
+
+
 register_command("mcp", _mcp_command, "show the MCP servers and their tools")
 register_command("compact", _compact_command, "summarize the conversation to free context")
 register_command("sessions", _sessions_command, "list the saved sessions")
 register_command("resume", _resume_command, "continue a saved session: /resume [id]")
+register_command("checkpoint", _checkpoint_command, "save this point: /checkpoint [name]")
+register_command("checkpoints", _checkpoints_command, "list the checkpoints of this session")
+register_command("restore", _restore_command, "go back to a checkpoint: /restore <id or name>")

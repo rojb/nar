@@ -75,16 +75,8 @@ class SessionStore:
 
     def save(self, session: Session) -> None:
         """Replace the file atomically; raises ``OSError`` when it cannot be written."""
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         text = json.dumps(_to_json(session), ensure_ascii=False, indent=1)
-        descriptor, temporary = tempfile.mkstemp(dir=self.directory, suffix=".tmp")  # mode 0600
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-                file.write(text)
-            os.replace(temporary, self.path(session.id))
-        except BaseException:
-            Path(temporary).unlink(missing_ok=True)
-            raise
+        write_private(self.path(session.id), text)
 
     def load(self, session_id: str) -> Session:
         path = self.path(session_id)
@@ -129,6 +121,19 @@ class SessionStore:
         return None
 
 
+def write_private(path: Path, text: str) -> None:
+    """Replace ``path`` atomically with a file only the user can read (Linux and macOS)."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")  # mode 0600
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            file.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
 def _to_json(session: Session) -> dict[str, Any]:
     return {
         "version": FORMAT_VERSION,
@@ -138,11 +143,11 @@ def _to_json(session: Session) -> dict[str, Any]:
         "cwd": session.cwd,
         "provider": session.provider,
         "model": session.model,
-        "messages": [_message_to_json(message) for message in session.messages],
+        "messages": [message_to_json(message) for message in session.messages],
     }
 
 
-def _message_to_json(message: Message) -> dict[str, Any]:
+def message_to_json(message: Message) -> dict[str, Any]:
     return {
         "role": message.role,
         "content": message.content,
@@ -166,13 +171,13 @@ def _read(path: Path) -> Session:
             raise ValueError(f"unknown version {data['version']}")
         text_fields = ("id", "created_at", "updated_at", "cwd", "provider", "model")
         values = {name: _text(data[name]) for name in text_fields}
-        messages = tuple(_message_from_json(item) for item in data["messages"])
+        messages = tuple(message_from_json(item) for item in data["messages"])
     except (KeyError, TypeError, ValueError) as exc:
         raise SessionFileError(f"{problem}: not a valid session ({exc})") from exc
     return Session(messages=messages, **values)
 
 
-def _message_from_json(item: dict[str, Any]) -> Message:
+def message_from_json(item: dict[str, Any]) -> Message:
     if item["role"] not in _ROLES:
         raise ValueError(f"unknown role {item['role']}")
     calls = tuple(
