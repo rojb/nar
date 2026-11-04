@@ -86,6 +86,38 @@ again, until the model answers without tools or `max_turns` model calls were mad
 - **System prompt:** it tells the model it is `nar`, how to use its tools, the working
   directory, OS and date, and adds the project's `AGENTS.md` when one is found.
 
+## Commands
+
+In interactive mode a line that starts with `/` is a command, not a request. Commands answer on
+standard error, so a redirected run keeps only the answer.
+
+| Command | What it does |
+|---|---|
+| `/help` | list every command with its summary |
+| `/model` | show the provider and model, or change them in place |
+| `/approval` | show the approval level, or change it in place |
+| `/clear` | start a new conversation, keeping the provider and the approval level |
+| `/config` | show the effective configuration and the file each value came from |
+| `/tools` | list the tools the model can call, including the MCP ones |
+| `/tokens` | show the tokens used, the context window and the percentage |
+| `/compact` | summarize the conversation to free context |
+| `/sessions` | list the saved sessions |
+| `/resume` | continue a saved session: `/resume [id]` |
+| `/mcp` | show the MCP servers and their tools |
+| `/exit` | leave, exactly like `exit` |
+
+- **`/model` and `/approval` change the session in place.** The conversation, the tools and the
+  session stay; only the next model call uses the new provider, and the next tool call uses the new
+  approval level. `/model ollama`, `/model ollama/qwen2.5-coder` and `/model ollama qwen2.5-coder`
+  all work; an unknown provider, or one whose API key is missing, is rejected with a one-line error
+  and the previous provider stays in use. The session file keeps the provider it was created with,
+  so a later `--resume` starts from the configuration again.
+- **Completion needs a terminal.** When standard input is a terminal the prompt completes `/`
+  commands and shows their summaries; with a pipe or a redirected file it reads a plain line and
+  everything else behaves the same, so `printf '/help\nexit\n' | nar` works.
+- **`/clear` says so**: the earlier messages are gone from the conversation and from the session
+  file, and the next request starts from the system prompt alone.
+
 ## Configuration
 
 `nar` reads two optional TOML files and merges them; project values override user values, and
