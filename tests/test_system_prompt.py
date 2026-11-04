@@ -1,7 +1,7 @@
 from datetime import date
 from pathlib import Path
 
-from nar.agent.prompt import build_system_prompt
+from nar.agent.prompt import build_subagent_prompt, build_system_prompt
 from nar.context import ProjectInstructions
 
 CWD = Path("/home/user/project")
@@ -59,3 +59,35 @@ def test_planning_and_memory_guidelines():
     prompt = build()
     assert "first write a plan with the todos tool" in prompt
     assert "save it with the memory tool" in prompt
+
+
+def subagent(instructions=None):
+    return build_subagent_prompt(
+        "THE ROLE", CWD, instructions, platform_name="Linux 6.8", today=date(2026, 10, 27)
+    )
+
+
+def test_main_prompt_tells_when_to_delegate():
+    text = " ".join(build().split())
+    assert "use the task tool with the explorer subagent" in text
+    assert "Do not use it to read a file you already know" in text
+
+
+def test_subagent_prompt_has_the_role_and_the_environment():
+    text = subagent()
+    assert "You are nar" in text
+    assert "THE ROLE" in text
+    assert str(CWD) in text
+    assert "Linux 6.8" in text
+
+
+def test_subagent_prompt_includes_project_instructions():
+    instructions = ProjectInstructions(Path("/p/AGENTS.md"), "Always answer in Spanish", False)
+    assert "Always answer in Spanish" in subagent(instructions)
+
+
+def test_subagent_prompt_leaves_out_memory_and_the_main_guidelines():
+    text = subagent()
+    assert "Memory" not in text
+    assert "todos" not in text
+    assert "task tool" not in text

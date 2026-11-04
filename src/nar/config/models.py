@@ -103,6 +103,8 @@ class NarConfig(BaseModel):
     approval: ApprovalLevel = ApprovalLevel.ASK
     # Model calls the agent may make for one request (RRG-63).
     max_turns: int = Field(default=20, ge=1)
+    # Model calls a subagent may make for one task (RRG-73).
+    subagent_max_turns: int = Field(default=15, ge=1)
     # Size of the model's context in tokens, and the percentage of it where nar starts
     # reducing the conversation (RRG-70).
     context_window: int | None = Field(default=None, ge=1000)

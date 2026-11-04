@@ -494,3 +494,17 @@ def test_hook_timeout_from_the_project_file(home, project):
 def test_configuration_does_not_import_the_hook_runner(home, project):
     code = "import sys, nar.config; assert 'nar.hooks' not in sys.modules"
     assert subprocess.run([sys.executable, "-c", code], capture_output=True).returncode == 0
+
+
+def test_subagent_max_turns_default_and_source(home, project):
+    loaded = load_config(project)
+    assert loaded.config.subagent_max_turns == 15
+    assert "subagent_max_turns = 15  (default)" in loaded.describe(project)
+
+
+def test_invalid_subagent_max_turns_names_setting_and_file(home, project):
+    path = write(project / ".nar" / "config.toml", "subagent_max_turns = 0\n")
+    with pytest.raises(ConfigError) as caught:
+        load_config(project)
+    assert "subagent_max_turns" in caught.value.message
+    assert str(path) in caught.value.message

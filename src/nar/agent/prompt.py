@@ -30,6 +30,10 @@ task in progress, and update the list as you finish each step.
 - When the user states a lasting preference or an important fact about themselves or the \
 project, save it with the memory tool (a short key and a one-sentence value). Follow the \
 facts listed under Memory.
+- For a broad search of the code, such as exploring a repository or finding how something \
+works, use the task tool with the explorer subagent instead of reading many files yourself. Do \
+not use it to read a file you already know. It cannot see this conversation, so give it a \
+complete prompt.
 - Keep answers concise and direct. When you have what you need, answer without calling \
 more tools."""
 
@@ -43,21 +47,47 @@ def build_system_prompt(
     today: date | None = None,
 ) -> str:
     """Identity, guidelines, environment, then saved memory and ``AGENTS.md`` when present."""
+    sections = [IDENTITY, GUIDELINES, _environment(cwd, platform_name, today)]
+    if memory:
+        facts = "\n".join(f"- {key}: {value}" for key, value in memory.items())
+        sections.append(f"# Memory (saved in earlier sessions)\n{facts}")
+    if instructions is not None:
+        sections.append(_project_instructions(instructions))
+    return "\n\n".join(sections)
+
+
+def build_subagent_prompt(
+    role: str,
+    cwd: Path,
+    instructions: ProjectInstructions | None = None,
+    *,
+    platform_name: str | None = None,
+    today: date | None = None,
+) -> str:
+    """Identity, role, environment and ``AGENTS.md``.
+
+    Saved memory is about the user and the conversation, which a subagent does not have, and the
+    main guidelines mention tools it may not have.
+    """
+    sections = [IDENTITY, role, _environment(cwd, platform_name, today)]
+    if instructions is not None:
+        sections.append(_project_instructions(instructions))
+    return "\n\n".join(sections)
+
+
+def _environment(cwd: Path, platform_name: str | None, today: date | None) -> str:
     system = platform_name or f"{platform.system()} {platform.release()}".strip()
-    environment = (
+    return (
         "# Environment\n"
         f"- Working directory: {cwd}\n"
         f"- Operating system: {system}\n"
         f"- Date: {(today or date.today()).isoformat()}"
     )
-    sections = [IDENTITY, GUIDELINES, environment]
-    if memory:
-        facts = "\n".join(f"- {key}: {value}" for key, value in memory.items())
-        sections.append(f"# Memory (saved in earlier sessions)\n{facts}")
-    if instructions is not None:
-        sections.append(
-            f"# Project instructions (from {instructions.path})\n"
-            "Follow these instructions from the project's AGENTS.md:\n\n"
-            f"{instructions.content.strip()}"
-        )
-    return "\n\n".join(sections)
+
+
+def _project_instructions(instructions: ProjectInstructions) -> str:
+    return (
+        f"# Project instructions (from {instructions.path})\n"
+        "Follow these instructions from the project's AGENTS.md:\n\n"
+        f"{instructions.content.strip()}"
+    )
