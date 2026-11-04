@@ -67,6 +67,7 @@ class FakeProvider:
 
     def stream(self, messages, *, system=None, tools=(), max_tokens=100):
         self.requests.append(list(messages))
+        self.tool_names = [tool["name"] for tool in tools]
         step = self.script.pop(0) if self.script else LLMResponse("Hello there")
         if isinstance(step, BaseException):
             raise step
@@ -126,7 +127,7 @@ def test_usage_error_keeps_click_exit_code(runner):
 
 
 def test_nar_error_is_one_line_without_traceback(runner, monkeypatch):
-    def boom(prompt, config, instructions, resumed=None):
+    def boom(prompt, config, instructions, resumed=None, trust_project_tools=False):
         raise NarError("it broke", exit_code=3)
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -137,7 +138,7 @@ def test_nar_error_is_one_line_without_traceback(runner, monkeypatch):
 
 
 def test_nar_error_traceback_with_debug(runner, monkeypatch):
-    def boom(prompt, config, instructions, resumed=None):
+    def boom(prompt, config, instructions, resumed=None, trust_project_tools=False):
         raise NarError("it broke")
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -149,7 +150,7 @@ def test_nar_error_traceback_with_debug(runner, monkeypatch):
 
 
 def test_unexpected_error_generic_message_and_hint(runner, monkeypatch):
-    def boom(prompt, config, instructions, resumed=None):
+    def boom(prompt, config, instructions, resumed=None, trust_project_tools=False):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(cli_module, "run_single", boom)
@@ -687,6 +688,99 @@ def test_a_checkpoint_is_available_after_resuming(runner, workdir, fake_provider
     assert "restored checkpoint 1" in result.stderr
     (session,) = saved_sessions(workdir)
     assert [m.content for m in session.messages] == ["first", "one"]
+
+
+# Custom tools (RRG-75)
+
+TOOL_SOURCE = """
+from pathlib import Path
+from nar.tools import Tool, ToolResult
+
+Path({marker!r}).write_text("ran")
+
+
+class ProjectTool(Tool):
+    name = "project_tool"
+    description = "A project tool."
+    parameters = {{"type": "object", "properties": {{}}}}
+    requires_approval = {approval}
+
+    def execute(self, arguments, context):
+        return ToolResult.ok("project tool result")
+"""
+
+
+def project_tool(workdir, marker, approval=False):
+    folder = workdir / ".nar" / "tools"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "project_tool.py").write_text(
+        TOOL_SOURCE.format(marker=str(marker), approval=approval), encoding="utf-8"
+    )
+
+
+def test_a_project_tool_with_the_flag_reaches_the_model_in_both_modes(
+    runner, workdir, fake_provider, tmp_path
+):
+    project_tool(workdir, tmp_path / "ran")
+    result = runner.invoke(main, ["--trust-project-tools", "hello"])
+    assert result.exit_code == 0
+    assert "project_tool" in fake_provider.tool_names
+    assert "custom tool loaded: project_tool" in result.stderr
+    result = runner.invoke(main, [], input="hello\nexit\n")  # remembered, also without a terminal
+    assert result.exit_code == 0
+    assert "project_tool" in fake_provider.tool_names
+
+
+def test_without_a_terminal_a_project_tool_does_not_run_and_the_run_goes_on(
+    runner, workdir, fake_provider, tmp_path
+):
+    marker = tmp_path / "ran"
+    project_tool(workdir, marker)
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 0
+    assert "--trust-project-tools" in result.stderr
+    assert not marker.exists()
+    assert "project_tool" not in fake_provider.tool_names
+
+
+def test_project_configuration_cannot_allow_project_tools(runner, workdir, fake_provider, tmp_path):
+    marker = tmp_path / "ran"
+    project_tool(workdir, marker)
+    (workdir / ".nar" / "config.toml").write_text('approval = "yolo"\n', encoding="utf-8")
+    result = runner.invoke(main, ["hello"])
+    assert result.exit_code == 0
+    assert not marker.exists()
+
+
+def test_approval_yolo_flag_cannot_allow_project_tools(runner, workdir, fake_provider, tmp_path):
+    marker = tmp_path / "ran"
+    project_tool(workdir, marker)
+    runner.invoke(main, ["--approval", "yolo", "hello"])
+    assert not marker.exists()
+
+
+def test_a_missing_api_key_fails_before_any_tool_file_runs(runner, workdir, tmp_path):
+    marker = tmp_path / "ran"
+    project_tool(workdir, marker)
+    result = runner.invoke(main, ["--trust-project-tools", "hello"])
+    assert result.exit_code == 1
+    assert "OPENROUTER_API_KEY" in result.stderr
+    assert not marker.exists()
+
+
+def test_a_custom_tool_that_requires_approval_goes_through_the_gate(
+    runner, workdir, fake_provider, tmp_path
+):
+    project_tool(workdir, tmp_path / "ran", approval=True)
+    fake_provider.script = [
+        LLMResponse("", (ToolCall("c1", "project_tool", {}),), StopReason.TOOL_CALLS),
+        LLMResponse("done"),
+    ]
+    result = runner.invoke(main, ["--trust-project-tools", "use it"])
+    assert result.exit_code == 0
+    sent = fake_provider.requests[-1][-1]
+    assert sent.role == "tool"
+    assert "project tool result" not in sent.content  # no terminal to ask, so it was refused
 
 
 def test_help_does_not_load_the_session_code():

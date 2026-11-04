@@ -25,6 +25,7 @@ def run_single(
     config: NarConfig,
     instructions: ProjectInstructions | None,
     resumed: Session | None = None,
+    trust_project_tools: bool = False,
 ) -> int:
     """Run the agent on one prompt; returns the exit code."""
     # Imported here: the provider SDKs are slow to import and other commands do not need them.
@@ -32,7 +33,9 @@ def run_single(
     from nar.ui.agent_view import AgentView
 
     view = AgentView()
-    agent = create_agent(config, Path.cwd(), instructions, view)
+    agent = create_agent(
+        config, Path.cwd(), instructions, view, trust_project_tools=trust_project_tools
+    )
     with connect_mcp(config, agent, view):
         recorder = open_session(agent, view, Path.cwd(), resumed)
         if resumed is not None:
@@ -98,6 +101,11 @@ def _find_session(resume: str, cwd: Path) -> Session:
     metavar="[ID]",
     help="Continue the latest session of this folder, or the session with this id.",
 )
+@click.option(
+    "--trust-project-tools",
+    is_flag=True,
+    help="Allow the tool files in .nar/tools/ of this folder to run, without asking.",
+)
 @click.argument("prompt", required=False)
 def cli(
     prompt: str | None,
@@ -106,6 +114,7 @@ def cli(
     model: str | None,
     approval: str | None,
     resume: str | None,
+    trust_project_tools: bool,
 ) -> int:
     cwd = Path.cwd()
     # Invalid configuration stops startup here.
@@ -119,8 +128,8 @@ def cli(
     resumed = _find_session(resume, cwd) if resume is not None else None
     instructions = load_project_instructions(cwd)
     if prompt is not None:
-        return run_single(prompt, loaded.config, instructions, resumed)
-    repl.run(loaded.config, instructions, resumed, loaded)
+        return run_single(prompt, loaded.config, instructions, resumed, trust_project_tools)
+    repl.run(loaded.config, instructions, resumed, loaded, trust_project_tools)
     return 0
 
 

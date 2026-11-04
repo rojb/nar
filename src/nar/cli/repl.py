@@ -23,6 +23,7 @@ def run(
     instructions: ProjectInstructions | None = None,
     resumed: Session | None = None,
     loaded: object | None = None,
+    trust_project_tools: bool = False,
 ) -> None:
     """Read requests until ``exit``, end-of-input or Ctrl+C at the prompt.
 
@@ -44,7 +45,10 @@ def run(
     if instructions is not None:
         click.echo(f"Using AGENTS.md: {instructions.path}")
     view = AgentView()
-    agent = create_agent(config, Path.cwd(), instructions, view)  # a missing key stops here
+    # A missing key stops here.
+    agent = create_agent(
+        config, Path.cwd(), instructions, view, trust_project_tools=trust_project_tools
+    )
     with connect_mcp(config, agent, view) as mcp:
         click.echo(f"nar · {agent.provider.name} · {agent.provider.model}. Type 'exit' to leave.")
         recorder = open_session(agent, view, Path.cwd(), resumed)

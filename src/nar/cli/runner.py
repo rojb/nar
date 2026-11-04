@@ -33,9 +33,11 @@ from nar.mcp import McpManager
 from nar.providers import factory
 from nar.session import Session, SessionRecorder, SessionStore, sessions_dir
 from nar.tools import create_default_registry
+from nar.tools.custom import load_custom_tools
 from nar.tools.memory import MemoryFileError, MemoryStore, memory_path
 from nar.ui.agent_view import AgentView
 from nar.ui.approval_prompt import TerminalPrompter
+from nar.ui.trust_prompt import TrustPrompter
 
 
 class Outcome(StrEnum):
@@ -49,12 +51,17 @@ def create_agent(
     cwd: Path,
     instructions: ProjectInstructions | None,
     view: AgentView,
+    *,
+    trust_project_tools: bool = False,
 ) -> Agent:
-    """Provider, built-in tools and a fresh conversation; a missing API key fails here."""
+    """Provider, tools and a fresh conversation; a missing API key fails before any tool file."""
     provider = factory.create_provider(config, on_retry=view.retry)
     view.waiting_text = f"waiting for {provider.model}..."
     context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
     registry = create_default_registry(cwd)
+    load_custom_tools(
+        registry, cwd, TrustPrompter(view.err), trust_project_tools, view.note, view.warn
+    )
     prompter = TerminalPrompter(view.tools)
     limits = ContextLimits(config.context_window, config.context_threshold)
     hooks = (
