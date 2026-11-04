@@ -37,7 +37,8 @@ def run_single(
         recorder = open_session(agent, view, Path.cwd(), resumed)
         if resumed is not None:
             view.note(f"resumed session {resumed.id} ({len(resumed.messages)} messages)")
-        return 1 if run_request(agent, view, prompt, recorder) is Outcome.TURN_LIMIT else 0
+        outcome = run_request(agent, view, prompt, recorder)
+        return 1 if outcome in (Outcome.TURN_LIMIT, Outcome.LOOP) else 0
 
 
 def _find_session(resume: str, cwd: Path) -> Session:

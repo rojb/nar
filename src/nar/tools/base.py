@@ -11,6 +11,7 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -33,6 +34,16 @@ class ToolContext:
     cwd: Path
 
 
+class FailureKind(StrEnum):
+    """Why a call failed. The model is told which one it was, so it can react."""
+
+    UNKNOWN_TOOL = "unknown tool"
+    INVALID_ARGUMENTS = "invalid arguments"
+    TOOL_ERROR = "tool error"
+    UNEXPECTED_ERROR = "unexpected error"
+    REFUSED = "refused by the user"  # the user said no; never wrapped as a tool failure
+
+
 @dataclass(frozen=True)
 class ToolResult:
     """Outcome of a tool call.
@@ -46,6 +57,7 @@ class ToolResult:
     summary: str | None = None  # one-liner for the terminal, e.g. "read 5 lines"
     diff: str | None = None  # unified diff for the terminal; None for most tools
     display: str | None = None  # extra lines for the user only, e.g. a task checklist
+    error_kind: FailureKind = FailureKind.TOOL_ERROR  # only read when is_error
 
     @classmethod
     def ok(
@@ -58,8 +70,8 @@ class ToolResult:
         return cls(output=output, summary=summary, diff=diff, display=display)
 
     @classmethod
-    def error(cls, message: str) -> ToolResult:
-        return cls(output=message, is_error=True)
+    def error(cls, message: str, kind: FailureKind = FailureKind.TOOL_ERROR) -> ToolResult:
+        return cls(output=message, is_error=True, error_kind=kind)
 
 
 @dataclass(frozen=True)

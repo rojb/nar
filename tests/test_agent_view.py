@@ -8,12 +8,15 @@ from nar.agent.events import (
     CompactionStarted,
     ContextCompacted,
     ContextPruned,
+    LoopAborted,
+    LoopDetected,
     ModelCallStarted,
     RequestFinished,
     ToolCallFinished,
     ToolCallStarted,
     TurnLimitReached,
 )
+from nar.agent.loops import LoopKind
 from nar.providers.messages import LLMResponse, TextDelta, ToolCall
 from nar.providers.retry import RetryNotice
 from nar.tools.base import ToolResult
@@ -186,3 +189,42 @@ def test_context_usage_line():
     view.context_usage(12_300, 128_000)
     assert out.getvalue() == ""
     assert err.getvalue() == "context: 12,300 / 128,000 tokens (9%)\n"
+
+
+# --- loop detection (RRG-71) -----------------------------------------------------
+
+
+def test_loop_warning_and_stop_go_to_stderr_only():
+    view, out, err = make_view()
+    play(
+        view,
+        ModelCallStarted(1),
+        TextDelta("partial"),
+        LoopDetected(LoopKind.REPEAT, CALL, 3),
+        LoopAborted(LoopKind.REPEAT, CALL, 3),
+    )
+    assert out.getvalue() == "partial\n"
+    text = err.getvalue()
+    assert "warning: the agent repeated read_file with the same arguments three times" in text
+    assert "asked it to change strategy" in text
+    assert "stopped: the agent kept repeating read_file after the warning" in text
+
+
+def test_loop_events_print_a_tool_name_literally():
+    view, out, err = make_view()
+    play(view, LoopDetected(LoopKind.REPEAT, ToolCall("c1", "[red]tool", {}), 3))
+    assert "[red]tool" in err.getvalue()
+    assert out.getvalue() == ""
+
+
+def test_an_alternation_has_its_own_wording():
+    view, out, err = make_view()
+    play(
+        view,
+        LoopDetected(LoopKind.OSCILLATION, CALL, 2),
+        LoopAborted(LoopKind.OSCILLATION, CALL, 2),
+    )
+    text = err.getvalue()
+    assert "alternated between the same calls (read_file)" in text
+    assert "kept alternating between the same calls (read_file) after the warning" in text
+    assert out.getvalue() == ""

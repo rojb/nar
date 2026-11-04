@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from nar.config.models import ApprovalLevel
-from nar.tools.base import Tool, ToolContext, ToolPreview, ToolResult
+from nar.tools.base import FailureKind, Tool, ToolContext, ToolPreview, ToolResult
 from nar.tools.validation import validate_arguments
 
 MAX_REASON_CHARS = 500
@@ -128,7 +128,9 @@ def _rejected(tool: Tool, reason: str | None) -> ToolResult:
     reason = (reason or "").strip()[:MAX_REASON_CHARS]
     if reason:
         message += f' The user said: "{reason}"'
-    return ToolResult(output=message, is_error=True, summary="rejected by user")
+    return ToolResult(
+        output=message, is_error=True, summary="rejected by user", error_kind=FailureKind.REFUSED
+    )
 
 
 def _unavailable(tool: Tool) -> ToolResult:
@@ -139,4 +141,9 @@ def _unavailable(tool: Tool) -> ToolResult:
         "(file edits inside the project folder) or --approval yolo, or by setting approval "
         "in .nar/config.toml."
     )
-    return ToolResult(output=message, is_error=True, summary="needs approval (cannot ask)")
+    return ToolResult(
+        output=message,
+        is_error=True,
+        summary="needs approval (cannot ask)",
+        error_kind=FailureKind.REFUSED,
+    )

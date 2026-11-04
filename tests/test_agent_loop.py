@@ -9,6 +9,8 @@ from nar.agent.events import (
     CompactionStarted,
     ContextCompacted,
     ContextPruned,
+    LoopAborted,
+    LoopDetected,
     ModelCallStarted,
     RequestFinished,
     ToolCallFinished,
@@ -16,6 +18,7 @@ from nar.agent.events import (
     TurnLimitReached,
 )
 from nar.agent.loop import Agent
+from nar.agent.loops import LoopDetector
 from nar.config.models import ApprovalLevel
 from nar.context.compaction import Compactor, ContextLimits
 from nar.context.manager import ContextManager
@@ -30,7 +33,7 @@ from nar.providers.messages import (
     ToolCall,
 )
 from nar.tools import ToolContext
-from nar.tools.base import Tool, ToolResult
+from nar.tools.base import FailureKind, Tool, ToolResult
 from nar.tools.edit_file import EditFileTool
 from nar.tools.registry import ToolRegistry
 from nar.tools.write_file import WriteFileTool
@@ -86,12 +89,12 @@ def tool_answer(*calls):
     return LLMResponse("", tuple(calls), StopReason.TOOL_CALLS)
 
 
-def make_agent(provider, *tools, max_turns=20, gate=None):
+def make_agent(provider, *tools, max_turns=20, gate=None, detector=None):
     registry = ToolRegistry()
     for tool in tools:
         registry.register(tool)
     context = ContextManager("You are nar.")
-    return Agent(provider, registry, context, max_turns=max_turns, gate=gate)
+    return Agent(provider, registry, context, max_turns=max_turns, gate=gate, detector=detector)
 
 
 def run(agent, prompt="go"):
@@ -568,3 +571,84 @@ def test_an_agent_without_a_compactor_never_reduces_the_history():
     events = run(agent)
     assert not [e for e in events if isinstance(e, ContextPruned | CompactionStarted)]
     assert agent.context.overhead_tokens == 0
+
+
+# --- loop detection (RRG-71) -----------------------------------------------------
+
+
+def repeated(text_value="a", count=3, prefix="c"):
+    return tool_answer(*[call(f"{prefix}{index}", text=text_value) for index in range(count)])
+
+
+def test_without_a_detector_a_repetition_changes_nothing():
+    provider = ScriptedProvider(repeated(), LLMResponse("done"))
+    agent = make_agent(provider, EchoTool())
+    events = run(agent)
+    assert not any(isinstance(event, (LoopDetected, LoopAborted)) for event in events)
+    assert isinstance(events[-1], RequestFinished)
+
+
+def test_three_identical_calls_warn_the_model_and_the_request_goes_on():
+    provider = ScriptedProvider(repeated(), LLMResponse("done"))
+    agent = make_agent(provider, EchoTool(), detector=LoopDetector())
+    events = run(agent)
+    detected = [event for event in events if isinstance(event, LoopDetected)]
+    assert len(detected) == 1
+    assert detected[0].count == 3
+    warning = provider.requests[1]["messages"][-1]
+    assert warning.role == "user"
+    assert warning.content.startswith("[nar] ")
+    assert "three times" in warning.content
+    assert isinstance(events[-1], RequestFinished)
+
+
+def test_a_repetition_after_the_warning_stops_the_request():
+    provider = ScriptedProvider(repeated(), repeated(prefix="d"), LLMResponse("never asked"))
+    agent = make_agent(provider, EchoTool(), detector=LoopDetector())
+    events = run(agent)
+    assert len(provider.requests) == 2
+    assert isinstance(events[-1], LoopAborted)
+    assert [event for event in events if isinstance(event, LoopDetected)]
+    messages = agent.context.messages
+    answered = {message.tool_call_id for message in messages if message.role == "tool"}
+    requested = {tool_call.id for message in messages for tool_call in message.tool_calls}
+    assert requested == answered
+    assert messages[-1].role == "tool"
+
+
+def test_the_detector_starts_again_on_each_request():
+    provider = ScriptedProvider(repeated(), LLMResponse("first"), repeated(), LLMResponse("second"))
+    agent = make_agent(provider, EchoTool(), detector=LoopDetector())
+    first = run(agent, "one")
+    second = run(agent, "two")
+    assert [event for event in second if isinstance(event, LoopDetected)]
+    assert [event for event in second if isinstance(event, LoopAborted)] == []
+    assert isinstance(first[-1], RequestFinished)
+
+
+def test_a_cancelled_request_rolls_back_the_warning():
+    provider = ScriptedProvider(repeated(), KeyboardInterrupt())
+    agent = make_agent(provider, EchoTool(), detector=LoopDetector())
+    with pytest.raises(KeyboardInterrupt):
+        run(agent)
+    assert agent.context.messages == ()
+
+
+def test_a_failing_result_reaches_the_model_in_the_envelope():
+    provider = ScriptedProvider(tool_answer(call("c1", name="missing")), LLMResponse("ok"))
+    agent = make_agent(provider, EchoTool())
+    run(agent)
+    sent = provider.requests[1]["messages"][-1].content
+    assert sent.startswith("[tool error] missing\nkind: unknown tool\nmessage:\n")
+    assert "does not exist" in sent
+    assert sent.endswith("Change the arguments or the approach.")
+
+
+def test_a_refusal_is_not_enveloped():
+    refusal = ToolResult(
+        output="The user rejected this echo call", is_error=True, error_kind=FailureKind.REFUSED
+    )
+    provider = ScriptedProvider(tool_answer(call("c1", text="a")), LLMResponse("ok"))
+    agent = make_agent(provider, EchoTool(), gate=lambda tool, arguments: refusal)
+    run(agent)
+    assert provider.requests[1]["messages"][-1].content == "The user rejected this echo call"

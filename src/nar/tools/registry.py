@@ -11,7 +11,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
 from nar.errors import ToolError
-from nar.tools.base import NAME_PATTERN, Tool, ToolContext, ToolDefinition, ToolResult
+from nar.tools.base import NAME_PATTERN, FailureKind, Tool, ToolContext, ToolDefinition, ToolResult
 from nar.tools.limits import truncate_output
 from nar.tools.validation import validate_arguments
 
@@ -57,17 +57,25 @@ class ToolRegistry:
         """Run a tool call. Failures the model can fix come back as error results."""
         tool = self._tools.get(name)
         if tool is None:
-            return self._finish(ToolResult.error(self._missing_message(name)))
+            return self._finish(
+                ToolResult.error(self._missing_message(name), FailureKind.UNKNOWN_TOOL)
+            )
         problems = validate_arguments(tool.parameters, dict(arguments))
         if problems:
             lines = "\n".join(f"- {problem}" for problem in problems)
-            return self._finish(ToolResult.error(f"Invalid arguments for {name}:\n{lines}"))
+            return self._finish(
+                ToolResult.error(
+                    f"Invalid arguments for {name}:\n{lines}", FailureKind.INVALID_ARGUMENTS
+                )
+            )
         try:
             result = tool.execute(dict(arguments), self._context)
         except ToolError as error:
-            result = ToolResult.error(error.message)
+            result = ToolResult.error(error.message, FailureKind.TOOL_ERROR)
         except Exception as error:
-            result = ToolResult.error(f"{type(error).__name__}: {error}")
+            result = ToolResult.error(
+                f"{type(error).__name__}: {error}", FailureKind.UNEXPECTED_ERROR
+            )
         return self._finish(result)
 
     def _missing_message(self, name: str) -> str:

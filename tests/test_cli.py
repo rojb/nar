@@ -1139,3 +1139,34 @@ def test_a_missing_provider_key_fails_before_any_server_starts(runner, workdir):
     assert result.exit_code == 1
     assert "OPENROUTER_API_KEY is not set" in result.stderr
     assert not (workdir / "demo.pid").exists()
+
+
+# --- loop detection (RRG-71) -----------------------------------------------------
+
+
+def repeated_calls(prefix, name="list_dir", count=3):
+    calls = tuple(ToolCall(f"{prefix}{index}", name, {"path": "."}) for index in range(count))
+    return LLMResponse("", calls, StopReason.TOOL_CALLS)
+
+
+def test_a_loop_in_single_mode_exits_one(runner, workdir, fake_provider):
+    fake_provider.script = [repeated_calls("a"), repeated_calls("b"), LLMResponse("never asked")]
+    result = runner.invoke(main, ["list the files over and over"])
+    assert result.exit_code == 1
+    assert "warning: the agent repeated list_dir" in result.stderr
+    assert "stopped: the agent kept repeating list_dir after the warning" in result.stderr
+    assert len(fake_provider.requests) == 2
+    assert "never asked" not in result.stdout
+
+
+def test_a_loop_in_interactive_mode_returns_to_the_prompt(runner, fake_provider):
+    fake_provider.script = [
+        repeated_calls("a"),
+        repeated_calls("b"),
+        LLMResponse("second answer"),
+    ]
+    result = runner.invoke(main, [], input="first\nsecond\nexit\n")
+    assert result.exit_code == 0
+    assert "stopped: the agent kept repeating list_dir after the warning" in result.stderr
+    assert "second answer" in result.stdout
+    assert [message.content for message in fake_provider.requests[2]][-1] == "second"

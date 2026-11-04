@@ -4,6 +4,7 @@ import pytest
 
 from nar.errors import NarError, ToolError
 from nar.tools import Tool, ToolContext, ToolRegistry, ToolResult, create_default_registry
+from nar.tools.base import FailureKind
 from nar.tools.read_file import ReadFileTool
 
 SCHEMA = {
@@ -335,3 +336,40 @@ def test_context_property_is_the_context_the_registry_runs_tools_with(tmp_path):
     context = ToolContext(cwd=tmp_path)
 
     assert ToolRegistry(context).context is context
+
+
+# --- failure kinds (RRG-71) ------------------------------------------------------
+
+
+def test_unknown_tool_is_marked_unknown_tool():
+    registry = ToolRegistry()
+    registry.register(StubTool("read_file"))
+    assert registry.execute("nope", {}).error_kind is FailureKind.UNKNOWN_TOOL
+
+
+def test_schema_mismatch_is_marked_invalid_arguments():
+    registry = ToolRegistry()
+    registry.register(StubTool())
+    assert registry.execute("stub", {}).error_kind is FailureKind.INVALID_ARGUMENTS
+
+
+def test_tool_error_keeps_its_kind():
+    registry = ToolRegistry()
+    registry.register(StubTool(behavior=raise_(ToolError("nothing to do"))))
+    result = registry.execute("stub", {"text": "x"})
+    assert result.error_kind is FailureKind.TOOL_ERROR
+    assert result.output == "nothing to do"
+
+
+def test_unexpected_exception_is_marked_unexpected():
+    registry = ToolRegistry()
+    registry.register(StubTool(behavior=raise_(RuntimeError("boom"))))
+    assert registry.execute("stub", {"text": "x"}).error_kind is FailureKind.UNEXPECTED_ERROR
+
+
+def test_a_success_carries_the_default_kind_and_no_error():
+    registry = ToolRegistry()
+    registry.register(StubTool())
+    result = registry.execute("stub", {"text": "hi"})
+    assert result.is_error is False
+    assert result.error_kind is FailureKind.TOOL_ERROR

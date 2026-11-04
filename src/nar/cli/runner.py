@@ -16,6 +16,8 @@ from nar.agent import (
     Agent,
     CompactionStarted,
     ContextCompacted,
+    LoopAborted,
+    LoopDetector,
     ModelCallStarted,
     TurnLimitReached,
     approval_gate,
@@ -38,6 +40,7 @@ from nar.ui.approval_prompt import TerminalPrompter
 class Outcome(StrEnum):
     FINISHED = "finished"
     TURN_LIMIT = "turn_limit"
+    LOOP = "loop"
 
 
 def create_agent(
@@ -60,6 +63,7 @@ def create_agent(
         max_turns=config.max_turns,
         gate=approval_gate(config.approval, prompter, registry.context),
         compactor=Compactor(provider, limits),
+        detector=LoopDetector(),
     )
 
 
@@ -94,6 +98,8 @@ def run_request(
                 view.handle(event)
                 if isinstance(event, TurnLimitReached):
                     outcome = Outcome.TURN_LIMIT
+                elif isinstance(event, LoopAborted):
+                    outcome = Outcome.LOOP
     finally:
         view.finish()
         # Here a cancelled or failed request has already been rolled back.

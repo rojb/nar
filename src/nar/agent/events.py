@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from nar.agent.loops import LoopKind
 from nar.providers.messages import LLMResponse, TextDelta, ToolCall
 from nar.tools.base import ToolResult
 
@@ -34,6 +35,24 @@ class AnswerCutOff:
 @dataclass(frozen=True)
 class TurnLimitReached:
     max_turns: int
+
+
+@dataclass(frozen=True)
+class LoopDetected:
+    """The same calls repeated; the model was asked to change strategy."""
+
+    kind: LoopKind
+    call: ToolCall
+    count: int
+
+
+@dataclass(frozen=True)
+class LoopAborted:
+    """The calls repeated again after the warning, so the request was stopped."""
+
+    kind: LoopKind
+    call: ToolCall
+    count: int
 
 
 @dataclass(frozen=True)
@@ -73,6 +92,8 @@ class CompactionFailed:
 
 AgentEvent = (
     ModelCallStarted
+    | LoopDetected
+    | LoopAborted
     | ContextPruned
     | CompactionStarted
     | ContextCompacted

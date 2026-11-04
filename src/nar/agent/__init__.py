@@ -15,6 +15,8 @@ from nar.agent.events import (
     CompactionStarted,
     ContextCompacted,
     ContextPruned,
+    LoopAborted,
+    LoopDetected,
     ModelCallStarted,
     RequestFinished,
     ToolCallFinished,
@@ -22,6 +24,7 @@ from nar.agent.events import (
     TurnLimitReached,
 )
 from nar.agent.loop import Agent, ToolGate
+from nar.agent.loops import LoopDetector
 from nar.agent.prompt import build_system_prompt
 
 __all__ = [
@@ -37,6 +40,9 @@ __all__ = [
     "CompactionStarted",
     "ContextCompacted",
     "ContextPruned",
+    "LoopAborted",
+    "LoopDetected",
+    "LoopDetector",
     "ModelCallStarted",
     "RequestFinished",
     "ToolCallFinished",

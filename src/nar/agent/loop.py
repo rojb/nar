@@ -13,19 +13,22 @@ from nar.agent.events import (
     CompactionStarted,
     ContextCompacted,
     ContextPruned,
+    LoopAborted,
+    LoopDetected,
     ModelCallStarted,
     RequestFinished,
     ToolCallFinished,
     ToolCallStarted,
     TurnLimitReached,
 )
+from nar.agent.loops import Decision, LoopDetector, render_failure, warning_text
 from nar.context.compaction import CompactionError, Compactor
 from nar.context.manager import ContextManager, estimate_tokens
 from nar.context.pruning import prune_tool_results, shorten_unseen_results
 from nar.errors import ProviderError
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
-from nar.tools.base import Tool, ToolResult
+from nar.tools.base import FailureKind, Tool, ToolResult
 from nar.tools.registry import ToolRegistry
 
 # Runs before a tool; returning a result skips the tool and sends that result instead.
@@ -44,6 +47,7 @@ class Agent:
         max_turns: int = 20,
         gate: ToolGate | None = None,
         compactor: Compactor | None = None,
+        detector: LoopDetector | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -51,6 +55,7 @@ class Agent:
         self.max_turns = max_turns
         self.gate = gate
         self.compactor = compactor
+        self.detector = detector
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:
         """Handle one user request, yielding what happens.
@@ -58,6 +63,8 @@ class Agent:
         The request is added to the conversation only if the generator runs to
         the end; an exception or an early close removes every trace of it.
         """
+        if self.detector is not None:
+            self.detector.reset()
         mark = self.context.mark()
         completed = False
         try:
@@ -81,8 +88,18 @@ class Agent:
                 for call in response.tool_calls:
                     yield ToolCallStarted(call)
                     result = self._run_tool(call)
-                    self.context.add_tool_result(call.id, result)
+                    self._record(call, result)
+                    self.context.add_tool_result(call.id, self._feedback(call, result))
                     yield ToolCallFinished(call, result)
+                finding = self.detector.check() if self.detector is not None else None
+                if finding is not None and finding.decision is Decision.STOP:
+                    completed = True  # every call has its result, so the history stays valid
+                    yield LoopAborted(finding.kind, finding.call, finding.count)
+                    return
+                if finding is not None:
+                    self.context.add_user(warning_text(finding))
+                    self.detector.reset_tail()
+                    yield LoopDetected(finding.kind, finding.call, finding.count)
         finally:
             if not completed:
                 self.context.rollback(mark)
@@ -135,6 +152,16 @@ class Agent:
         if response is None:  # providers always end with ResponseDone; be defensive
             response = LLMResponse("")
         return response
+
+    def _record(self, call: ToolCall, result: ToolResult) -> None:
+        if self.detector is not None:
+            self.detector.record(call, result)
+
+    def _feedback(self, call: ToolCall, result: ToolResult) -> ToolResult:
+        """What the model reads: a failure inside a fixed frame, everything else as it is."""
+        if not result.is_error or result.error_kind is FailureKind.REFUSED:
+            return result
+        return render_failure(call, result)
 
     def _run_tool(self, call: ToolCall) -> ToolResult:
         if self.gate is not None and call.name in self.registry.names():

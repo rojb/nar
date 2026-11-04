@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nar.tools.base import NAME_PATTERN, Tool, ToolContext, ToolPreview, ToolResult
+from nar.tools.base import NAME_PATTERN, FailureKind, Tool, ToolContext, ToolPreview, ToolResult
 
 
 class EchoTool(Tool):
@@ -88,6 +88,20 @@ def test_display_defaults_to_none_and_ok_accepts_it():
     assert ToolResult.ok("x").display is None
     assert ToolResult.ok("x", display="[ ] a").display == "[ ] a"
     assert ToolResult.error("x").display is None
+
+
+# --- failure kinds (RRG-71) ------------------------------------------------------
+
+
+def test_error_defaults_to_the_tool_error_kind():
+    assert ToolResult.error("x").error_kind is FailureKind.TOOL_ERROR
+    assert ToolResult.ok("x").error_kind is FailureKind.TOOL_ERROR
+
+
+def test_error_accepts_the_kind():
+    result = ToolResult.error("x", FailureKind.INVALID_ARGUMENTS)
+    assert result.error_kind is FailureKind.INVALID_ARGUMENTS
+    assert result.output == "x"
 
 
 # --- previews and the project-edit declaration ------------------------------------

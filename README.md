@@ -69,6 +69,16 @@ again, until the model answers without tools or `max_turns` model calls were mad
   conversation) and returns to the prompt; in single mode it exits with code 130.
 - **Turn limit:** when `max_turns` is reached `nar` stops with a message; single mode then exits
   with code 1.
+- **Repeated calls:** if the model calls a tool again with exactly the same arguments three times
+  in a row, or alternates between the same two calls twice without anything changing, `nar` adds a
+  message asking it to change strategy and the request goes on. If the same calls repeat after that
+  warning, the request stops with a message; the session continues and single mode exits with code
+  1. Calls that failed count after two repetitions instead of three. The thresholds are not
+  configurable.
+- **Failed tools are explained:** the model receives a failing tool result inside a fixed envelope
+  naming the tool, the kind of failure (unknown tool, invalid arguments, tool error, unexpected
+  error) and the original message, plus a line saying that repeating the call will fail the same
+  way. Results that succeed, and calls the user rejected, reach the model unchanged.
 - **Provider errors** in interactive mode are shown on one line and the session continues.
 - **Tools that need approval** (`write_file`, `edit_file`, `shell` and every MCP tool) ask you first, unless the
   approval level says otherwise (see "Approvals"). If you say no, or `nar` cannot ask, the model
