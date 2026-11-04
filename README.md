@@ -137,6 +137,7 @@ nested tables (such as `mcp_servers`) are merged key by key:
 | `max_turns` | whole number, at least 1: model calls allowed per request | `20` |
 | `context_window` | whole number, at least 1000: size of the model's context in tokens | by provider (see "Long conversations") |
 | `context_threshold` | whole number from 1 to 100: percentage of the window where `nar` starts reducing the conversation | `80` |
+| `subagent_max_turns` | whole number, at least 1: model calls a subagent may make for one task | `15` |
 | `mcp_servers` | table of named MCP server definitions, `[mcp_servers.<name>]` (see "MCP servers") | empty |
 | `hooks` | table of shell commands run around the loop, `[hooks]` (see "Hooks") | empty |
 | `hook_timeout` | whole or fractional number of seconds, 1 to 600: how long each hook command gets | `10` |
@@ -374,6 +375,32 @@ want them. Later checkpoints are kept, so `/restore 2` after `/restore 1` undoes
 Checkpoints last with their session and are available again after `nar --resume` or `/resume`. They
 are saved in `~/.nar/sessions/checkpoints/<session id>.json`, in plain text like sessions, with the
 same permissions; `nar` never removes them.
+
+## Subagents
+
+To keep long searches out of the conversation, the model can hand a task to a subagent with the
+`task` tool. A subagent has its own conversation, starts knowing only the prompt it was given, and
+returns only its final answer. So the main context grows by that answer, however much the subagent
+read. (Why this helps, and how other agents do it, is in
+[`docs/SUBAGENTES.md`](https://github.com/rojb/nar-specs/blob/main/docs/SUBAGENTES.md).)
+
+| Type | Tools | For |
+|---|---|---|
+| `explorer` | `read_file`, `grep`, `glob`, `list_dir` | searching and understanding code; it cannot change anything |
+| `general` | every other tool, including MCP and custom tools, but not `task` or `todos` | a separate piece of work that also changes things |
+
+- The model decides when to delegate, and it can choose not to.
+- While it works you see one updating line. Its text and its tool activity are not shown, and they are
+  not saved in the session. When it ends, the result line says, for example,
+  `explorer: 12 tool calls, 3 turns`.
+- `general` asks for approval like the main agent, and "always" answers are shared. Hooks run too:
+  `before_tool` can block a subagent's call, and `before_agent` and `after_agent` fire for each
+  subagent as well.
+- A subagent stops after `subagent_max_turns` model calls (default 15). The main agent is told that
+  the answer may be incomplete. Subagents cannot start other subagents, and they run one at a time.
+- Ctrl+C cancels the whole request.
+- **A subagent makes its own model calls.** The main context stays small, but a delegated task can
+  use more tokens in total.
 
 ## Custom tools
 
