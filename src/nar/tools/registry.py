@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,12 @@ class ToolRegistry:
 
     def names(self) -> list[str]:
         return list(self._tools)
+
+    def subset(self, names: Iterable[str]) -> ToolRegistry:
+        """A registry with the same context and the same tools, for those of ``names`` it has."""
+        registry = ToolRegistry(self._context)
+        registry._tools = {name: self._tools[name] for name in names if name in self._tools}
+        return registry
 
     def definitions(self) -> list[ToolDefinition]:
         return [tool.definition() for tool in self._tools.values()]

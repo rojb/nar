@@ -373,3 +373,26 @@ def test_a_success_carries_the_default_kind_and_no_error():
     result = registry.execute("stub", {"text": "hi"})
     assert result.is_error is False
     assert result.error_kind is FailureKind.TOOL_ERROR
+
+
+def test_subset_keeps_the_context_and_the_instances_in_the_order_asked():
+    context = ToolContext(cwd=Path("/project"))
+    registry = ToolRegistry(context)
+    one, two = StubTool("one"), StubTool("two")
+    registry.register(one)
+    registry.register(two)
+    subset = registry.subset(["two", "one", "missing"])
+    assert subset.names() == ["two", "one"]
+    assert subset.get("one") is one
+    assert subset.context is context
+    assert subset.execute("two", {"text": "hi"}).output == "hi"
+    assert registry.names() == ["one", "two"]
+
+
+def test_a_subset_does_not_run_what_it_does_not_have():
+    registry = ToolRegistry()
+    registry.register(StubTool("one"))
+    registry.register(StubTool("two"))
+    subset = registry.subset(["one"])
+    result = subset.execute("two", {"text": "x"})
+    assert result.error_kind is FailureKind.UNKNOWN_TOOL
