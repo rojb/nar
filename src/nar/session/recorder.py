@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from nar.context.manager import ContextManager
+from nar.session.checkpoints import Checkpoint, CheckpointStore
 from nar.session.store import Session, SessionStore
 
 
@@ -21,6 +22,7 @@ class SessionRecorder:
         self.context = context
         self.warn = warn
         self._warned = False
+        self._checkpoints = CheckpointStore(store.directory)
 
     def save(self) -> None:
         """Write the conversation; a failure warns and never stops the work.
@@ -45,3 +47,18 @@ class SessionRecorder:
         """Continue ``session``: its messages replace the conversation, later saves go to it."""
         self.context.replace_messages(session.messages)
         self.session = session
+
+    def checkpoints(self) -> list[Checkpoint]:
+        return self._checkpoints.load(self.session.id)
+
+    def checkpoint(self, name: str) -> Checkpoint:
+        """Save the conversation as a point of this session; it needs at least one message."""
+        self.save()
+        return self._checkpoints.add(self.session.id, name, self.context.messages)
+
+    def restore(self, reference: str) -> Checkpoint:
+        """Go back to a checkpoint; an unknown reference raises and changes nothing."""
+        checkpoint = self._checkpoints.find(self.session.id, reference)
+        self.context.replace_messages(checkpoint.messages)
+        self.save()
+        return checkpoint
