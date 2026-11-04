@@ -228,3 +228,29 @@ def test_an_alternation_has_its_own_wording():
     assert "alternated between the same calls (read_file)" in text
     assert "kept alternating between the same calls (read_file) after the warning" in text
     assert out.getvalue() == ""
+
+
+def test_subagent_progress_is_one_updating_line_on_stderr():
+    err = io.StringIO()
+    out = io.StringIO()
+    view = AgentView(
+        Console(file=out, force_terminal=False),
+        Console(file=err, force_terminal=True, width=80),
+    )
+    view.subagents.update("explorer", 1)
+    assert "explorer: 1 tool calls" in view._status.status
+    first = view._status
+    view.subagents.update("explorer", 2)
+    assert view._status is first
+    assert "explorer: 2 tool calls" in view._status.status
+    view.subagents.pause()
+    assert view._status is None
+    assert out.getvalue() == ""
+
+
+def test_subagent_progress_prints_nothing_without_a_terminal():
+    view, out, err = make_view()
+    view.subagents.update("explorer", 1)
+    view.finish()
+    assert out.getvalue() == ""
+    assert "tool calls" not in err.getvalue()

@@ -23,6 +23,7 @@ from nar.agent import (
     approval_gate,
     build_system_prompt,
 )
+from nar.agent.subagent import TaskTool
 from nar.config import NarConfig, ProviderName
 from nar.context import ProjectInstructions
 from nar.context.compaction import CompactionError, Compactor, ContextLimits
@@ -59,9 +60,6 @@ def create_agent(
     view.waiting_text = f"waiting for {provider.model}..."
     context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
     registry = create_default_registry(cwd)
-    load_custom_tools(
-        registry, cwd, TrustPrompter(view.err), trust_project_tools, view.note, view.warn
-    )
     prompter = TerminalPrompter(view.tools)
     limits = ContextLimits(config.context_window, config.context_threshold)
     hooks = (
@@ -75,7 +73,7 @@ def create_agent(
         if config.hooks
         else None
     )
-    return Agent(
+    agent = Agent(
         provider,
         registry,
         context,
@@ -85,6 +83,19 @@ def create_agent(
         detector=LoopDetector(),
         hooks=hooks,
     )
+    registry.register(
+        TaskTool(
+            agent,
+            max_turns=config.subagent_max_turns,
+            instructions=instructions,
+            progress=view.subagents,
+        )
+    )
+    # Last: a custom tool cannot take the name of any tool above.
+    load_custom_tools(
+        registry, cwd, TrustPrompter(view.err), trust_project_tools, view.note, view.warn
+    )
+    return agent
 
 
 @contextmanager

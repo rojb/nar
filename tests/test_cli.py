@@ -783,6 +783,70 @@ def test_a_custom_tool_that_requires_approval_goes_through_the_gate(
     assert "project tool result" not in sent.content  # no terminal to ask, so it was refused
 
 
+# Subagents (RRG-73)
+
+
+def task_script(answer="the summary"):
+    call = ToolCall("t", "task", {"subagent": "explorer", "prompt": "look around"})
+    return [
+        LLMResponse("", (call,), StopReason.TOOL_CALLS),
+        LLMResponse("", (ToolCall("r", "list_dir", {}),), StopReason.TOOL_CALLS),
+        LLMResponse(answer),
+        LLMResponse("the main answer"),
+    ]
+
+
+def test_task_reaches_the_model_and_standard_output_has_only_the_main_answer(
+    runner, workdir, fake_provider
+):
+    fake_provider.script = task_script()
+    result = runner.invoke(main, ["explain the architecture"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "the main answer"
+    assert "the summary" not in result.stdout
+    assert "explorer: 1 tool calls, 2 turns" in result.stderr
+
+
+def test_a_saved_session_has_the_summary_and_not_the_messages_of_the_subagent(
+    runner, workdir, fake_provider
+):
+    fake_provider.script = task_script()
+    runner.invoke(main, ["explain the architecture"])
+    (session,) = saved_sessions(workdir)
+    assert [m.role for m in session.messages] == ["user", "assistant", "tool", "assistant"]
+    assert session.messages[2].content == "the summary"
+    assert "list_dir" not in [c.name for m in session.messages for c in m.tool_calls]
+
+
+def test_the_main_agent_offers_task_and_the_subagent_turn_limit_comes_from_the_settings(
+    runner, workdir, fake_provider
+):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text("subagent_max_turns = 1\n", encoding="utf-8")
+    fake_provider.script = task_script()[:2] + [LLMResponse("the main answer")]
+    result = runner.invoke(main, ["go"])
+    assert result.exit_code == 0
+    assert "task" in fake_provider.tool_names
+    sent = fake_provider.requests[-1][-1]
+    assert sent.role == "tool"
+    assert "limit of 1 turns" in sent.content
+
+
+def test_a_custom_tool_cannot_take_the_name_of_task(runner, workdir, fake_provider, tmp_path):
+    folder = workdir / ".nar" / "tools"
+    folder.mkdir(parents=True)
+    (folder / "fake.py").write_text(
+        TOOL_SOURCE.format(marker=str(tmp_path / "ran"), approval=False).replace(
+            '"project_tool"', '"task"'
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(main, ["--trust-project-tools", "hello"])
+    assert result.exit_code == 0
+    assert "already registered" in result.stderr
+    assert fake_provider.tool_names.count("task") == 1
+
+
 def test_help_does_not_load_the_session_code():
     code = (
         "import sys; from nar.cli import main\n"

@@ -41,6 +41,19 @@ def _looped(event: LoopDetected | LoopAborted, *, past: bool) -> str:
     return f"{verb} {event.call.name}"
 
 
+class SubagentLine:
+    """One updating line while a subagent works; its activity is otherwise folded away."""
+
+    def __init__(self, view: AgentView) -> None:
+        self._view = view
+
+    def update(self, kind: str, tool_calls: int) -> None:
+        self._view.show_progress(f"{kind}: {tool_calls} tool calls...")
+
+    def pause(self) -> None:
+        self._view.finish()
+
+
 class AgentView:
     def __init__(self, out: Console | None = None, err: Console | None = None) -> None:
         self.out = out or Console()
@@ -136,6 +149,17 @@ class AgentView:
         """How full the context is, as one dim line on standard error."""
         self.finish()
         self.note(f"context: {tokens:,} / {window:,} tokens ({tokens * 100 // window}%)")
+
+    @property
+    def subagents(self) -> SubagentLine:
+        return SubagentLine(self)
+
+    def show_progress(self, text: str) -> None:
+        """Change the waiting line to ``text``, starting it if it is not there."""
+        if self._status is None:
+            self._start_waiting(text)
+        else:
+            self._status.update(escape(text))
 
     def _start_waiting(self, text: str) -> None:
         if self._status is None:
