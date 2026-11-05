@@ -108,9 +108,10 @@ def test_mcp_prints_every_server():
         ServerStatus("jira", "http", "failed", error="authentication rejected (HTTP 401)"),
         ServerStatus("old", "stdio", "disabled"),
     )
-    context, out, _ = make_context(manager)
+    context, out, err = make_context(manager)
     assert slash.dispatch("/mcp", context) is True
-    text = out.getvalue()
+    text = err.getvalue()
+    assert out.getvalue() == ""
     assert "linear  (http)  connected" in text and "3 tools" in text
     assert "jira  (http)  failed" in text and "authentication rejected" in text
     assert "old  (stdio)  disabled" in text
@@ -121,9 +122,10 @@ def test_mcp_with_a_name_prints_only_that_server():
         ServerStatus("linear", "http", "connected", ("mcp__linear__a",)),
         ServerStatus("jira", "http", "failed", error="x"),
     )
-    context, out, _ = make_context(manager)
+    context, out, err = make_context(manager)
     slash.dispatch("/mcp jira", context)
-    assert "jira" in out.getvalue() and "linear" not in out.getvalue()
+    assert "jira" in err.getvalue() and "linear" not in err.getvalue()
+    assert out.getvalue() == ""
 
 
 def test_mcp_with_an_unknown_name_prints_an_error_with_the_configured_names():
@@ -136,10 +138,11 @@ def test_mcp_with_an_unknown_name_prints_an_error_with_the_configured_names():
 
 @pytest.mark.parametrize("manager", [None, FakeManager()])
 def test_mcp_with_nothing_configured_explains_how_to_add_a_server(manager):
-    context, out, _ = make_context(manager)
+    context, out, err = make_context(manager)
     assert slash.dispatch("/mcp", context) is True
-    assert "No MCP servers are configured" in out.getvalue()
-    assert "[mcp_servers.<name>]" in out.getvalue()
+    assert "No MCP servers are configured" in err.getvalue()
+    assert "[mcp_servers.<name>]" in err.getvalue()
+    assert out.getvalue() == ""
 
 
 def test_markup_like_text_is_printed_literally():
@@ -147,10 +150,11 @@ def test_markup_like_text_is_printed_literally():
         ServerStatus("s", "stdio", "connected", ("mcp__s__[red]x[/red]",)),
         ServerStatus("t", "http", "failed", error="[red]boom[/red]"),
     )
-    context, out, _ = make_context(manager)
+    context, out, err = make_context(manager)
     slash.dispatch("/mcp", context)
-    assert "mcp__s__[red]x[/red]" in out.getvalue()
-    assert "[red]boom[/red]" in out.getvalue()
+    assert "mcp__s__[red]x[/red]" in err.getvalue()
+    assert "[red]boom[/red]" in err.getvalue()
+    assert out.getvalue() == ""
 
 
 def test_registered_commands_can_be_added_and_receive_their_argument(monkeypatch):
@@ -247,12 +251,13 @@ def test_sessions_lists_without_calling_the_model_and_marks_the_current(session_
     (store.directory / "broken.json").write_text("not json", encoding="utf-8")
     assert slash.dispatch("/sessions", context) is True
     assert context.agent.provider.calls == 0
-    out = context.console.file.getvalue()
-    assert "* current" in out
-    assert "  other" in out
-    assert "other request" in out
-    assert str(project) in out
-    assert "1 session files are not valid" in context.err.file.getvalue()
+    shown = context.err.file.getvalue()
+    assert "* current" in shown
+    assert "  other" in shown
+    assert "other request" in shown
+    assert str(project) in shown
+    assert "1 session files are not valid" in shown
+    assert context.console.file.getvalue() == ""
 
 
 def test_resume_with_an_id_switches_and_shows_the_history(session_context):
@@ -337,15 +342,16 @@ def test_invalid_names_are_errors_that_save_nothing(session_context, name):
 def test_checkpoints_lists_this_session_only(session_context):
     context, store, conversation, project = session_context
     slash.dispatch("/checkpoints", context)
-    assert "this session has no checkpoints" in context.console.file.getvalue()
+    assert "this session has no checkpoints" in context.err.file.getvalue()
     slash.dispatch("/checkpoint base", context)
     store.save(other_session("other", project))
     slash.dispatch("/resume other", context)
-    context.console.file.truncate(0)
-    context.console.file.seek(0)
+    context.err.file.truncate(0)
+    context.err.file.seek(0)
     slash.dispatch("/checkpoints", context)
-    assert "this session has no checkpoints" in context.console.file.getvalue()
+    assert "this session has no checkpoints" in context.err.file.getvalue()
     assert context.agent.provider.calls == 0
+    assert context.console.file.getvalue() == ""
 
 
 def test_restore_discards_later_messages_in_the_context_and_the_file(session_context):

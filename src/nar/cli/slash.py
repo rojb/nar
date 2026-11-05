@@ -87,7 +87,7 @@ def dispatch(line: str, context: SlashContext) -> bool:
 
 def _mcp_command(context: SlashContext, argument: str) -> None:
     statuses = context.mcp.statuses() if context.mcp is not None else []
-    render_mcp_status(statuses, context.console, only=argument or None, err=context.err)
+    render_mcp_status(statuses, context.err, only=argument or None, err=context.err)
 
 
 def _compact_command(context: SlashContext, argument: str) -> None:
@@ -109,7 +109,7 @@ def _sessions_command(context: SlashContext, argument: str) -> None:
 
     recorder = context.recorder
     sessions, invalid = recorder.store.list()
-    render_sessions(sessions, recorder.session.id, invalid, context.console, context.err)
+    render_sessions(sessions, recorder.session.id, invalid, context.err, context.err)
 
 
 def _resume_command(context: SlashContext, argument: str) -> None:
@@ -167,7 +167,7 @@ def _checkpoints_command(context: SlashContext, argument: str) -> None:
     except NarError as exc:
         context.view.error(exc.message)
         return
-    render_checkpoints(checkpoints, context.console)
+    render_checkpoints(checkpoints, context.err)
 
 
 def _restore_command(context: SlashContext, argument: str) -> None:

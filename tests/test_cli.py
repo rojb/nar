@@ -684,7 +684,7 @@ def test_a_checkpoint_is_available_after_resuming(runner, workdir, fake_provider
     runner.invoke(main, [], input="first\n/checkpoint base\nsecond\nexit\n")
     result = runner.invoke(main, ["--resume"], input="/checkpoints\n/restore base\nexit\n")
     assert result.exit_code == 0
-    assert "base" in result.stdout
+    assert "base" in result.stderr
     assert "restored checkpoint 1" in result.stderr
     (session,) = saved_sessions(workdir)
     assert [m.content for m in session.messages] == ["first", "one"]
@@ -1224,7 +1224,8 @@ def test_interactive_mcp_command_prints_status_without_calling_the_model(
     result = runner.invoke(main, [], input="/mcp\nexit\n")
 
     assert result.exit_code == 0
-    assert "off  (stdio)  disabled" in result.stdout
+    assert "off  (stdio)  disabled" in result.stderr
+    assert "off  (stdio)  disabled" not in result.stdout
     assert fake_provider.requests == []
 
 
@@ -1232,7 +1233,8 @@ def test_interactive_mcp_command_without_servers_explains_where_to_add_them(
     runner, workdir, fake_provider
 ):
     result = runner.invoke(main, [], input="/mcp\nexit\n")
-    assert "No MCP servers are configured" in result.stdout
+    assert "No MCP servers are configured" in result.stderr
+    assert "No MCP servers are configured" not in result.stdout
     assert fake_provider.requests == []
 
 
