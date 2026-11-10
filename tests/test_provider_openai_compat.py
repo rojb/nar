@@ -466,3 +466,24 @@ def test_ollama_check_suggests_pulling_a_missing_model():
     assert info.value.message == (
         "model 'qwen-test' is not installed in Ollama; run 'ollama pull qwen-test'"
     )
+
+
+def test_list_models_returns_the_names_without_a_model_call():
+    api = ModelsAPI({"/models": (200, model_list("deepseek-flash", "deepseek-v4-pro"))})
+    assert deepseek(api).list_models() == ["deepseek-flash", "deepseek-v4-pro"]
+    assert api.paths == ["/models"]
+
+
+def test_list_models_names_the_key_variable_when_the_key_is_rejected():
+    api = ModelsAPI({"/models": (401, {"error": {"message": "Authentication Fails"}})})
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).list_models()
+    assert "DEEPSEEK_API_KEY" in info.value.message
+
+
+def test_ollama_list_models_fails_once_when_ollama_is_not_running():
+    api = ModelsAPI({"/v1/models": httpx2.ConnectError("Connection refused")})
+    with pytest.raises(ProviderError) as info:
+        ollama(api).list_models()
+    assert len(api.paths) == 1
+    assert "ollama serve" in info.value.message

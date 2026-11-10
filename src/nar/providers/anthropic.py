@@ -94,10 +94,13 @@ class AnthropicProvider(LLMProvider):
             return True
 
         if not call_once(found, self.context, CHECK_TIMEOUT):
-            names = call_once(
-                lambda: [model.id for model in client.models.list()], self.context, CHECK_TIMEOUT
-            )
-            raise unknown_model_error(self.name, self.model, names)
+            raise unknown_model_error(self.name, self.model, self.list_models())
+
+    def list_models(self) -> list[str]:
+        client = self.client.with_options(timeout=CHECK_TIMEOUT)
+        return call_once(
+            lambda: [model.id for model in client.models.list()], self.context, CHECK_TIMEOUT
+        )
 
     def _attempt(self, request: dict[str, Any]) -> Iterator[StreamEvent]:
         text: list[str] = []
