@@ -37,11 +37,18 @@ def runner():
     return _Runner()
 
 
+def _refuse_to_save(name, value):
+    raise AssertionError("tests must not save environment variables")
+
+
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch, tmp_path):
     monkeypatch.delenv("NAR_DEBUG", raising=False)
     for env in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "OLLAMA_HOST"):
-        monkeypatch.delenv(env, raising=False)
+        monkeypatch.setenv(env, "")  # recorded, so a key nar sets is undone after the test
+        monkeypatch.delenv(env)
+    # A test must never write the real Windows user environment.
+    monkeypatch.setattr("nar.cli.api_key.save_user_variable", _refuse_to_save)
     monkeypatch.setenv("NAR_HOME", str(tmp_path / "nar-home"))
 
 
@@ -1502,6 +1509,91 @@ def test_ctrl_c_while_checking_cancels_the_switch_and_keeps_the_session(runner, 
     assert "model switch cancelled; still using fake · fake-model" in result.stderr
     assert "still here" in result.stdout
     assert second.requests == []
+
+
+SECRET = "sk-secret-123"
+
+
+@pytest.fixture
+def at_a_terminal(monkeypatch):
+    """A person at the terminal who pastes SECRET; returns the variables saved."""
+    saved = []
+    monkeypatch.setattr("nar.ui.key_prompt.KeyPrompter.available", lambda self: True)
+    monkeypatch.setattr("nar.ui.key_prompt.getpass.getpass", lambda prompt: SECRET)
+    monkeypatch.setattr("nar.cli.api_key.can_save_user_variables", lambda: True)
+    monkeypatch.setattr(
+        "nar.cli.api_key.save_user_variable", lambda name, value: saved.append((name, value))
+    )
+    return saved
+
+
+def test_a_missing_key_is_asked_for_checked_and_saved(runner, fake_provider, at_a_terminal):
+    result = runner.invoke(main, ["--provider", "deepseek"], input="y\nhello\nexit\n")
+    assert result.exit_code == 0
+    assert "DEEPSEEK_API_KEY is not set." in result.stderr
+    assert "saved DEEPSEEK_API_KEY for your Windows user" in result.stderr
+    assert at_a_terminal == [("DEEPSEEK_API_KEY", SECRET)]
+    assert fake_provider.checks == 1
+    assert "Hello there" in result.stdout
+    assert SECRET not in result.stdout
+    assert SECRET not in result.stderr
+
+
+def test_a_pasted_key_can_be_used_once(runner, fake_provider, at_a_terminal):
+    result = runner.invoke(main, ["--provider", "deepseek", "hello"], input="n\n")
+    assert result.exit_code == 0
+    assert "DEEPSEEK_API_KEY is set for this session only" in result.stderr
+    assert at_a_terminal == []
+    assert "Hello there" in result.stdout
+
+
+def test_a_rejected_key_stops_startup_and_is_not_saved(runner, fake_provider, at_a_terminal):
+    fake_provider.check_error = ProviderError(
+        "deepseek rejected the API key; check DEEPSEEK_API_KEY", "deepseek"
+    )
+    result = runner.invoke(main, ["--provider", "deepseek"], input="y\nexit\n")
+    assert result.exit_code == 1
+    assert "error: deepseek rejected the API key; check DEEPSEEK_API_KEY" in result.stderr
+    assert "Save DEEPSEEK_API_KEY" not in result.stderr
+    assert at_a_terminal == []
+    assert fake_provider.requests == []
+
+
+def test_model_asks_for_a_missing_key_and_keeps_the_previous_one_on_rejection(
+    runner, monkeypatch, at_a_terminal
+):
+    first, second = two_providers(monkeypatch)
+    second.check_error = ProviderError(
+        "anthropic rejected the API key; check ANTHROPIC_API_KEY", "anthropic"
+    )
+    first.script = [LLMResponse("still here")]
+    lines = "/model anthropic\nare you there?\nexit\n"
+    result = runner.invoke(main, ["--provider", "ollama"], input=lines)
+    assert result.exit_code == 0
+    assert "ANTHROPIC_API_KEY is not set." in result.stderr
+    assert "still using fake · fake-model" in result.stderr
+    assert "Save ANTHROPIC_API_KEY" not in result.stderr
+    assert at_a_terminal == []
+    assert "still here" in result.stdout
+    assert SECRET not in result.stderr
+
+
+def test_model_with_a_pasted_key_switches_after_the_save_question(
+    runner, monkeypatch, at_a_terminal
+):
+    first, second = two_providers(monkeypatch)
+    result = runner.invoke(main, ["--provider", "ollama"], input="/model anthropic\ny\nexit\n")
+    assert result.exit_code == 0
+    assert at_a_terminal == [("ANTHROPIC_API_KEY", SECRET)]
+    assert "model: ollama · qwen2.5-coder" in result.stderr  # second's fake name
+    assert second.checks == 1
+
+
+def test_piped_input_asks_nothing_and_reports_the_missing_key(runner, workdir):
+    result = runner.invoke(main, ["--provider", "deepseek"], input="y\nexit\n")
+    assert result.exit_code == 1
+    assert "is not set." not in result.stderr
+    assert "error: DEEPSEEK_API_KEY is not set" in result.stderr
 
 
 def test_approval_shows_changes_and_rejects_levels(runner, fake_provider):

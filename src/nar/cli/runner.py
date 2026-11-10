@@ -24,6 +24,7 @@ from nar.agent import (
     build_system_prompt,
 )
 from nar.agent.subagent import TaskTool
+from nar.cli.api_key import keep_api_key, obtain_api_key, prepare_api_key
 from nar.config import NarConfig, ProviderName
 from nar.context import ProjectInstructions
 from nar.context.compaction import CompactionError, Compactor, ContextLimits
@@ -38,6 +39,7 @@ from nar.tools.custom import load_custom_tools
 from nar.tools.memory import MemoryFileError, MemoryStore, memory_path
 from nar.ui.agent_view import AgentView
 from nar.ui.approval_prompt import TerminalPrompter
+from nar.ui.key_prompt import KeyPrompter
 from nar.ui.trust_prompt import TrustPrompter
 
 
@@ -55,7 +57,11 @@ def create_agent(
     *,
     trust_project_tools: bool = False,
 ) -> Agent:
-    """Provider, tools and a fresh conversation; a missing API key fails before any tool file."""
+    """Provider, tools and a fresh conversation; a missing API key fails before any tool file.
+
+    In a terminal, a missing key is asked for and checked first.
+    """
+    prepare_api_key(config, KeyPrompter(view.err), view.note, view.warn)
     provider = factory.create_provider(config, on_retry=view.retry)
     view.waiting_text = f"waiting for {provider.model}..."
     context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
@@ -177,13 +183,23 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
     """``/model``: build the new provider first, and assign it only when it works."""
     provider_name, model = _model_spec(spec)
     config = NarConfig(provider=provider_name, model=model)
-    provider = factory.create_provider(config, on_retry=view.retry)
-    view.note(f"checking {provider.name} · {provider.model}...")
+    prompter = KeyPrompter(view.err)
+    pending = obtain_api_key(config, prompter)  # in a terminal, a missing key is asked for
     try:
+        provider = factory.create_provider(config, on_retry=view.retry)
+        view.note(f"checking {provider.name} · {provider.model}...")
         provider.check()  # Ctrl+C propagates to /model, which keeps the previous provider
     except ProviderError as exc:
+        if pending is not None:
+            pending.discard()
         current = agent.provider
         raise NarError(f"{exc.message}; still using {current.name} · {current.model}") from exc
+    except KeyboardInterrupt:
+        if pending is not None:
+            pending.discard()
+        raise
+    if pending is not None:
+        keep_api_key(pending, prompter, view.note, view.warn)
     agent.provider = provider
     if agent.compactor is not None:
         agent.compactor.provider = provider  # the summary must not go to the old one
