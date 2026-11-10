@@ -60,6 +60,13 @@ class FakeProvider:
         self.on_retry = None
         self.script = []
         self.requests = []
+        self.checks = 0
+        self.check_error = None  # raised by check(): a ProviderError or KeyboardInterrupt
+
+    def check(self):
+        self.checks += 1
+        if self.check_error is not None:
+            raise self.check_error
 
     @property
     def prompts(self):
@@ -1437,6 +1444,64 @@ def test_model_rejects_an_unknown_provider(runner, fake_provider):
     assert "unknown provider 'nope'" in result.stderr
     assert "anthropic, openrouter, ollama, deepseek" in result.stderr
     assert fake_provider.requests == []
+
+
+def two_providers(monkeypatch):
+    """The first create_provider call returns ``first``; every later one, ``second``."""
+    first, second = FakeProvider(), FakeProvider()
+    second.name, second.model = "ollama", "qwen2.5-coder"
+    created = []
+
+    def create(config, on_retry=None):
+        provider = (first, second)[min(len(created), 1)]
+        provider.config, provider.on_retry = config, on_retry
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr("nar.providers.factory.create_provider", create)
+    return first, second
+
+
+OLLAMA_DOWN = (
+    "cannot reach Ollama at http://localhost:11434; is it running? (start it with 'ollama serve')"
+)
+
+
+def test_model_checks_the_new_provider_before_switching(runner, monkeypatch):
+    first, second = two_providers(monkeypatch)
+    result = runner.invoke(main, [], input="/model ollama\nexit\n")
+    assert result.exit_code == 0
+    assert second.checks == 1
+    stderr = result.stderr
+    assert stderr.index("checking ollama · qwen2.5-coder...") < stderr.index(
+        "model: ollama · qwen2.5-coder"
+    )
+
+
+def test_model_keeps_the_previous_provider_when_the_check_fails(runner, monkeypatch):
+    first, second = two_providers(monkeypatch)
+    second.check_error = ProviderError(OLLAMA_DOWN, "ollama")
+    first.script = [LLMResponse("x" * 400), LLMResponse("still here"), LLMResponse("the summary")]
+    lines = f"{'u' * 400}\n/model ollama\nare you there?\n/compact\n/model\nexit\n"
+    result = runner.invoke(main, [], input=lines)
+    assert result.exit_code == 0
+    assert f"error: {OLLAMA_DOWN}; still using fake · fake-model" in result.stderr
+    assert "model: ollama" not in result.stderr
+    assert "provider fake, model fake-model" in result.stderr
+    assert "still here" in result.stdout
+    assert second.requests == []
+    assert "<transcript>" in first.requests[2][0].content  # compaction stayed too
+
+
+def test_ctrl_c_while_checking_cancels_the_switch_and_keeps_the_session(runner, monkeypatch):
+    first, second = two_providers(monkeypatch)
+    second.check_error = KeyboardInterrupt()
+    first.script = [LLMResponse("still here")]
+    result = runner.invoke(main, [], input="/model ollama\nare you there?\nexit\n")
+    assert result.exit_code == 0
+    assert "model switch cancelled; still using fake · fake-model" in result.stderr
+    assert "still here" in result.stdout
+    assert second.requests == []
 
 
 def test_approval_shows_changes_and_rejects_levels(runner, fake_provider):

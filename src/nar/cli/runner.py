@@ -178,6 +178,12 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
     provider_name, model = _model_spec(spec)
     config = NarConfig(provider=provider_name, model=model)
     provider = factory.create_provider(config, on_retry=view.retry)
+    view.note(f"checking {provider.name} · {provider.model}...")
+    try:
+        provider.check()  # Ctrl+C propagates to /model, which keeps the previous provider
+    except ProviderError as exc:
+        current = agent.provider
+        raise NarError(f"{exc.message}; still using {current.name} · {current.model}") from exc
     agent.provider = provider
     if agent.compactor is not None:
         agent.compactor.provider = provider  # the summary must not go to the old one

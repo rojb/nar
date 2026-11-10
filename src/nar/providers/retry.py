@@ -9,6 +9,7 @@ import random
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 import anthropic
 import openai
@@ -20,6 +21,10 @@ STATUS_ERRORS = (anthropic.APIStatusError, openai.APIStatusError)
 TIMEOUT_ERRORS = (anthropic.APITimeoutError, openai.APITimeoutError)
 CONNECTION_ERRORS = (anthropic.APIConnectionError, openai.APIConnectionError)
 RETRYABLE_STATUS = {408, 409, 429}
+# Seconds LLMProvider.check waits for an answer: short, since it only lists models.
+CHECK_TIMEOUT = 10.0
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,22 @@ def stream_with_retries(
             if on_retry is not None:
                 on_retry(RetryNotice(context.provider, attempt, max_attempts, delay, reason))
             policy.sleep(delay)
+
+
+def call_once(call: Callable[[], T], context: ErrorContext, timeout: float) -> T:
+    """Run ``call`` once, without retries, and turn an SDK error into a ``ProviderError``.
+
+    Used by ``LLMProvider.check``, which must fail fast: the user can run ``/model`` again.
+    """
+    try:
+        return call()
+    except ProviderError:
+        raise
+    except TIMEOUT_ERRORS as exc:  # before CONNECTION_ERRORS: the SDKs subclass them
+        message = f"{context.provider} did not answer within {timeout:g} seconds"
+        raise ProviderError(message, context.provider) from exc
+    except Exception as exc:
+        raise translate_error(exc, context) from exc
 
 
 def retry_reason(exc: Exception) -> str | None:

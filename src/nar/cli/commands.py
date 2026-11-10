@@ -53,10 +53,13 @@ def _model(context: SlashContext, argument: str) -> None:
     if not spec:
         _line(context, f"provider {agent.provider.name}, model {agent.provider.model}")
         return
+    current = agent.provider
     try:
         switch_model(agent, view, spec)
     except NarError as exc:
         _line(context, f"error: {exc.message}")
+    except KeyboardInterrupt:  # during the check: the session goes on
+        _line(context, f"model switch cancelled; still using {current.name} · {current.model}")
 
 
 def _approval(context: SlashContext, argument: str) -> None:
