@@ -316,3 +316,9 @@ def test_check_says_when_the_server_does_not_answer_in_time():
         checked_provider(api).check()
     assert info.value.message == "anthropic did not answer within 10 seconds"
     assert len(api.paths) == 1
+
+
+def test_list_models_returns_the_names():
+    api = ModelsAPI({"/v1/models": (200, MODEL_LIST)})
+    assert checked_provider(api).list_models() == ["claude-sonnet-5-5", "claude-opus-5-5"]
+    assert api.paths == ["/v1/models"]

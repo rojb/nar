@@ -207,6 +207,17 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
     view.note(f"model: {provider.name} · {provider.model}")
 
 
+def list_models(agent: Agent, view: AgentView, spec: str) -> tuple[str, list[str]]:
+    """``/models``: the provider in use, or another one built only to ask; never switches."""
+    if spec.strip():
+        provider_name, _ = _model_spec(spec)
+        provider = factory.create_provider(NarConfig(provider=provider_name), on_retry=view.retry)
+    else:
+        provider = agent.provider
+    view.note(f"listing {provider.name} models...")
+    return provider.name, provider.list_models()
+
+
 def _model_spec(spec: str) -> tuple[ProviderName, str | None]:
     """``ollama``, ``ollama/qwen2.5-coder`` or ``ollama qwen2.5-coder``."""
     text = spec.strip()

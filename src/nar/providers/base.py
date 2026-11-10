@@ -49,6 +49,10 @@ class LLMProvider(ABC):
         Costs no tokens. Adapters that cannot check do nothing, so they are trusted as before.
         """
 
+    def list_models(self) -> list[str]:
+        """The names of the provider's models; costs no tokens. ``ProviderError`` if it can't."""
+        raise ProviderError(f"{self.name} cannot list its models", self.name)
+
     def complete(
         self,
         messages: Sequence[Message],

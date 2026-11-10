@@ -98,13 +98,16 @@ class OpenAICompatibleProvider(LLMProvider):
 
     def check(self) -> None:
         """List the server's models; a rejected key or an unreachable server fails here too."""
-        client = self.client.with_options(timeout=CHECK_TIMEOUT)
-        self._check_key(client)
-        names = call_once(
-            lambda: [model.id for model in client.models.list()], self.context, CHECK_TIMEOUT
-        )
+        self._check_key(self.client.with_options(timeout=CHECK_TIMEOUT))
+        names = self.list_models()
         if not any(self._same_model(name) for name in names):
             raise self._missing_model(names)
+
+    def list_models(self) -> list[str]:
+        client = self.client.with_options(timeout=CHECK_TIMEOUT)
+        return call_once(
+            lambda: [model.id for model in client.models.list()], self.context, CHECK_TIMEOUT
+        )
 
     def _check_key(self, client: openai.OpenAI) -> None:
         """Servers whose model list does not need the key check it here."""
