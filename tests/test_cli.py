@@ -75,6 +75,13 @@ class FakeProvider:
         if self.check_error is not None:
             raise self.check_error
 
+    models = ("fake-model", "other-model")  # what list_models() returns, or an exception
+
+    def list_models(self):
+        if isinstance(self.models, BaseException):
+            raise self.models
+        return list(self.models)
+
     @property
     def prompts(self):
         return [request[-1].content for request in self.requests if request[-1].role == "user"]
@@ -1594,6 +1601,84 @@ def test_piped_input_asks_nothing_and_reports_the_missing_key(runner, workdir):
     assert result.exit_code == 1
     assert "is not set." not in result.stderr
     assert "error: DEEPSEEK_API_KEY is not set" in result.stderr
+
+
+def test_models_lists_the_provider_in_use_and_marks_its_model(runner, fake_provider):
+    fake_provider.models = ("zeta-model", "fake-model", "alpha-model")
+    result = runner.invoke(main, [], input="/models\n/model\nexit\n")
+    assert result.exit_code == 0
+    stderr = result.stderr
+    assert "listing fake models..." in stderr
+    assert "fake: 3 models" in stderr
+    assert stderr.index("  alpha-model") < stderr.index("  fake-model  ← in use")
+    assert stderr.index("  fake-model  ← in use") < stderr.index("  zeta-model")
+    assert "provider fake, model fake-model" in stderr  # nothing switched
+    assert "/models" not in result.stdout
+    assert fake_provider.requests == []
+
+
+def test_models_of_another_provider_does_not_switch(runner, monkeypatch):
+    first, second = two_providers(monkeypatch)
+    second.models = ("qwen2.5-coder:latest", "llama3:8b")
+    result = runner.invoke(main, [], input="/models ollama\n/model\nexit\n")
+    assert result.exit_code == 0
+    assert "ollama: 2 models" in result.stderr
+    assert "  llama3:8b" in result.stderr
+    assert "← in use" not in result.stderr  # the listed provider is not the one in use
+    assert "provider fake, model fake-model" in result.stderr
+    assert second.config.provider.value == "ollama"
+
+
+def test_models_filter_keeps_matching_names_ignoring_case(runner, monkeypatch):
+    first, second = two_providers(monkeypatch)
+    second.models = ("anthropic/claude-sonnet-5-5", "openai/gpt-5", "anthropic/Claude-opus-5-5")
+    result = runner.invoke(main, [], input="/models openrouter CLAUDE\nexit\n")
+    assert "ollama: 2 of 3 models match 'CLAUDE'" in result.stderr  # second's fake name
+    assert "  anthropic/Claude-opus-5-5" in result.stderr
+    assert "gpt-5" not in result.stderr
+
+
+def test_models_filter_without_matches_says_so(runner, fake_provider):
+    result = runner.invoke(main, [], input="/models fake-provider-x\nexit\n")
+    assert "unknown provider 'fake-provider-x'" in result.stderr
+    result = runner.invoke(main, [], input="/models anthropic zzz\nexit\n")
+    assert "fake: no model matches 'zzz' (2 models)" in result.stderr
+
+
+def test_models_errors_are_one_line_and_the_session_continues(runner, fake_provider):
+    fake_provider.models = ProviderError("deepseek rejected the API key; check X", "deepseek")
+    fake_provider.script = [LLMResponse("still here")]
+    result = runner.invoke(main, [], input="/models\nare you there?\nexit\n")
+    assert result.exit_code == 0
+    assert "error: deepseek rejected the API key; check X" in result.stderr
+    assert "still here" in result.stdout
+
+
+def test_models_for_a_provider_without_its_key_names_the_variable(runner, monkeypatch):
+    first = FakeProvider()
+    calls = []
+
+    def create(config, on_retry=None):
+        calls.append(config.provider.value)
+        if len(calls) > 1:
+            from nar.providers.factory import _api_key
+
+            _api_key(config.provider)  # the real check: raises for a missing key
+        return first
+
+    monkeypatch.setattr("nar.providers.factory.create_provider", create)
+    result = runner.invoke(main, [], input="/models anthropic\n/model\nexit\n")
+    assert "error: ANTHROPIC_API_KEY is not set" in result.stderr
+    assert "provider fake, model fake-model" in result.stderr
+
+
+def test_ctrl_c_while_listing_cancels_only_the_listing(runner, fake_provider):
+    fake_provider.models = KeyboardInterrupt()
+    fake_provider.script = [LLMResponse("still here")]
+    result = runner.invoke(main, [], input="/models\nare you there?\nexit\n")
+    assert result.exit_code == 0
+    assert "listing cancelled" in result.stderr
+    assert "still here" in result.stdout
 
 
 def test_approval_shows_changes_and_rejects_levels(runner, fake_provider):

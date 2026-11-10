@@ -62,6 +62,38 @@ def _model(context: SlashContext, argument: str) -> None:
         _line(context, f"model switch cancelled; still using {current.name} · {current.model}")
 
 
+def _models(context: SlashContext, argument: str) -> None:
+    from nar.cli.runner import list_models
+
+    agent, view = context.agent, context.view
+    if agent is None or view is None:
+        _line(context, "error: there is no agent to ask")
+        return
+    words = argument.split(None, 1)
+    spec = words[0] if words else ""
+    text = words[1].strip() if len(words) == 2 else ""
+    try:
+        provider, names = list_models(agent, view, spec)
+    except NarError as exc:
+        _line(context, f"error: {exc.message}")
+        return
+    except KeyboardInterrupt:  # the session goes on
+        _line(context, "listing cancelled")
+        return
+    names = sorted(names)
+    shown = [name for name in names if text.lower() in name.lower()]
+    if text and not shown:
+        _line(context, f"{provider}: no model matches '{text}' ({len(names)} models)")
+        return
+    if text:
+        _line(context, f"{provider}: {len(shown)} of {len(names)} models match '{text}'")
+    else:
+        _line(context, f"{provider}: {len(names)} models")
+    in_use = agent.provider.model if provider == agent.provider.name else None
+    for name in shown:
+        _line(context, f"  {name}  ← in use" if name == in_use else f"  {name}")
+
+
 def _approval(context: SlashContext, argument: str) -> None:
     gate = context.agent.gate if context.agent is not None else None
     if not isinstance(gate, ApprovalGate):
@@ -114,6 +146,7 @@ register_command("help", _help, "list every command")
 register_command("clear", _clear, "start a new conversation, keeping provider and approval")
 register_command("exit", _exit, "leave interactive mode")
 register_command("model", _model, "show or change the provider and model")
+register_command("models", _models, "list a provider's models: /models [provider] [filter]")
 register_command("approval", _approval, "show or change the approval level: /approval [level]")
 register_command("config", _config, "show the effective configuration and where it came from")
 register_command("tools", _tools, "list the tools the model can call")
