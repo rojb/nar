@@ -1761,6 +1761,27 @@ def test_piped_input_offers_no_list(runner, fake_provider):
     assert "Continue with another provider?" not in result.stderr
 
 
+def test_model_switch_takes_the_new_providers_context_window(runner, monkeypatch, workdir):
+    two_providers(monkeypatch)
+    result = runner.invoke(
+        main, ["--provider", "ollama"], input="/tokens\n/model deepseek\n/tokens\nexit\n"
+    )
+    assert result.exit_code == 0
+    stderr = result.stderr
+    assert "/ 4,096 tokens" in stderr
+    assert stderr.index("/ 4,096 tokens") < stderr.index("/ 128,000 tokens")
+
+
+def test_model_switch_keeps_a_context_window_the_user_set(runner, monkeypatch, workdir):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text("context_window = 32000\n", encoding="utf-8")
+    two_providers(monkeypatch)
+    result = runner.invoke(main, ["--provider", "ollama"], input="/model deepseek\n/tokens\nexit\n")
+    assert result.exit_code == 0
+    assert "/ 32,000 tokens" in result.stderr
+    assert "/ 128,000 tokens" not in result.stderr
+
+
 def test_approval_shows_changes_and_rejects_levels(runner, fake_provider):
     result = runner.invoke(main, [], input="/approval\n/approval yolo\n/approval nope\nexit\n")
     assert "approval ask" in result.stderr
