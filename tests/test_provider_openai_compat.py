@@ -362,3 +362,107 @@ def test_ollama_host_normalization(value, expected, monkeypatch):
 def test_ollama_host_from_environment(monkeypatch):
     monkeypatch.setenv("OLLAMA_HOST", "http://192.168.1.20:11434")
     assert OllamaProvider("m").host == "http://192.168.1.20:11434"
+
+
+class ModelsAPI:
+    """Answers GET requests by path; records each path asked for."""
+
+    def __init__(self, routes):
+        self.routes = routes  # path -> (status, body) or an exception
+        self.paths = []
+
+    def __call__(self, request):
+        self.paths.append(request.url.path)
+        outcome = self.routes[request.url.path]
+        if isinstance(outcome, Exception):
+            raise outcome
+        status, body = outcome
+        return httpx2.Response(status, json=body)
+
+
+def model_list(*names):
+    return {
+        "object": "list",
+        "data": [{"id": n, "object": "model", "owned_by": "x"} for n in names],
+    }
+
+
+def test_deepseek_check_passes_and_makes_no_model_call():
+    api = ModelsAPI({"/models": (200, model_list("deepseek-flash", "deepseek-v4-pro"))})
+    deepseek(api).check()
+    assert api.paths == ["/models"]
+
+
+def test_deepseek_check_names_the_key_variable_when_the_key_is_rejected():
+    api = ModelsAPI({"/models": (401, {"error": {"message": "Authentication Fails"}})})
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).check()
+    assert "DEEPSEEK_API_KEY" in info.value.message
+    assert api.paths == ["/models"]
+
+
+def test_deepseek_check_suggests_close_names_for_an_unknown_model():
+    api = ModelsAPI({"/models": (200, model_list("deepseek-flash", "deepseek-v4-pro"))})
+    with pytest.raises(ProviderError) as info:
+        deepseek(api, "deepseek-flsh").check()
+    assert info.value.message == (
+        "model 'deepseek-flsh' was not found by deepseek; did you mean deepseek-flash?"
+    )
+
+
+def test_unknown_model_without_close_names_has_no_suggestion():
+    api = ModelsAPI({"/models": (200, model_list("deepseek-flash"))})
+    with pytest.raises(ProviderError) as info:
+        deepseek(api, "gpt-zzz").check()
+    assert info.value.message == "model 'gpt-zzz' was not found by deepseek"
+
+
+def test_openrouter_check_asks_for_the_key_first():
+    api = ModelsAPI(
+        {
+            "/api/v1/key": (401, {"error": {"message": "No auth credentials found", "code": 401}}),
+            "/api/v1/models": (200, model_list("test/model")),
+        }
+    )
+    with pytest.raises(ProviderError) as info:
+        openrouter(api).check()
+    assert "OPENROUTER_API_KEY" in info.value.message
+    assert api.paths == ["/api/v1/key"]
+
+
+def test_openrouter_check_passes_with_a_valid_key_and_a_listed_model():
+    api = ModelsAPI(
+        {
+            "/api/v1/key": (200, {"data": {"label": "sk-or-...", "usage": 0}}),
+            "/api/v1/models": (200, model_list("test/model", "openrouter/auto")),
+        }
+    )
+    openrouter(api).check()
+    assert api.paths == ["/api/v1/key", "/api/v1/models"]
+
+
+def test_ollama_check_fails_once_when_ollama_is_not_running():
+    notices = []
+    api = ModelsAPI({"/v1/models": httpx2.ConnectError("Connection refused")})
+    provider = OllamaProvider(
+        "qwen-test", policy=POLICY, on_retry=notices.append, http_client=client(api)
+    )
+    with pytest.raises(ProviderError) as info:
+        provider.check()
+    assert len(api.paths) == 1
+    assert notices == []
+    assert "ollama serve" in info.value.message
+
+
+def test_ollama_check_matches_the_latest_tag():
+    api = ModelsAPI({"/v1/models": (200, model_list("qwen-test:latest"))})
+    ollama(api).check()
+
+
+def test_ollama_check_suggests_pulling_a_missing_model():
+    api = ModelsAPI({"/v1/models": (200, model_list("llama3:8b"))})
+    with pytest.raises(ProviderError) as info:
+        ollama(api).check()
+    assert info.value.message == (
+        "model 'qwen-test' is not installed in Ollama; run 'ollama pull qwen-test'"
+    )

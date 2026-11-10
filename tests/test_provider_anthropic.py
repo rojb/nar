@@ -230,3 +230,89 @@ def test_unknown_model_names_model_and_provider():
     with pytest.raises(ProviderError) as info:
         make_provider(FakeAPI((404, error))).complete([Message.user("x")])
     assert info.value.message == "model 'claude-test' was not found by anthropic"
+
+
+class ModelsAPI:
+    """Answers the models endpoints by path; records each path asked for."""
+
+    def __init__(self, routes):
+        self.routes = routes  # path -> (status, body) or an exception
+        self.paths = []
+
+    def __call__(self, request):
+        self.paths.append(request.url.path)
+        outcome = self.routes[request.url.path]
+        if isinstance(outcome, Exception):
+            raise outcome
+        status, body = outcome
+        return httpx2.Response(status, json=body)
+
+
+NOT_FOUND = {"type": "error", "error": {"type": "not_found_error", "message": "model: x"}}
+MODEL_LIST = {
+    "data": [
+        {
+            "type": "model",
+            "id": "claude-sonnet-5-5",
+            "display_name": "S",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+        {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "O",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    ],
+    "has_more": False,
+    "first_id": "claude-sonnet-5-5",
+    "last_id": "claude-opus-5-5",
+}
+
+
+def checked_provider(api, model="claude-test"):
+    client = httpx2.Client(transport=httpx2.MockTransport(api))
+    return AnthropicProvider(model, "sk-test", http_client=client)
+
+
+def test_check_passes_when_the_model_exists_and_makes_no_model_call():
+    model = {
+        "type": "model",
+        "id": "claude-test",
+        "display_name": "T",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    api = ModelsAPI({"/v1/models/claude-test": (200, model)})
+    checked_provider(api).check()
+    assert api.paths == ["/v1/models/claude-test"]
+
+
+def test_check_names_the_key_variable_when_the_key_is_rejected():
+    error = {
+        "type": "error",
+        "error": {"type": "authentication_error", "message": "invalid x-api-key"},
+    }
+    api = ModelsAPI({"/v1/models/claude-test": (401, error)})
+    with pytest.raises(ProviderError) as info:
+        checked_provider(api).check()
+    assert "ANTHROPIC_API_KEY" in info.value.message
+    assert len(api.paths) == 1  # no retries
+
+
+def test_check_suggests_close_names_for_an_unknown_model():
+    api = ModelsAPI(
+        {"/v1/models/claude-sonet-5-5": (404, NOT_FOUND), "/v1/models": (200, MODEL_LIST)}
+    )
+    with pytest.raises(ProviderError) as info:
+        checked_provider(api, "claude-sonet-5-5").check()
+    assert info.value.message == (
+        "model 'claude-sonet-5-5' was not found by anthropic; did you mean claude-sonnet-5-5?"
+    )
+
+
+def test_check_says_when_the_server_does_not_answer_in_time():
+    api = ModelsAPI({"/v1/models/claude-test": httpx2.ReadTimeout("slow")})
+    with pytest.raises(ProviderError) as info:
+        checked_provider(api).check()
+    assert info.value.message == "anthropic did not answer within 10 seconds"
+    assert len(api.paths) == 1

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
 from nar.errors import ProviderError
@@ -42,6 +43,12 @@ class LLMProvider(ABC):
     ) -> Iterator[StreamEvent]:
         """Yield ``TextDelta`` pieces, then exactly one ``ResponseDone``."""
 
+    def check(self) -> None:  # noqa: B027 - optional hook: adapters that cannot check skip it
+        """Raise ``ProviderError`` unless the server answers, accepts the key and has the model.
+
+        Costs no tokens. Adapters that cannot check do nothing, so they are trusted as before.
+        """
+
     def complete(
         self,
         messages: Sequence[Message],
@@ -55,6 +62,15 @@ class LLMProvider(ABC):
             if isinstance(event, ResponseDone):
                 return event.response
         raise ProviderError(f"{self.name} ended the response without finishing it", self.name)
+
+
+def unknown_model_error(provider: str, model: str, available: Iterable[str]) -> ProviderError:
+    """``model 'x' was not found by p``, with up to three close names when there are any."""
+    message = f"model '{model}' was not found by {provider}"
+    close = difflib.get_close_matches(model, list(available), n=3, cutoff=0.8)
+    if close:
+        message += f"; did you mean {', '.join(close)}?"
+    return ProviderError(message, provider)
 
 
 def parse_tool_arguments(raw: str) -> dict[str, Any]:

@@ -8,7 +8,12 @@ from typing import Any
 import anthropic
 import httpx2
 
-from nar.providers.base import DEFAULT_MAX_TOKENS, LLMProvider, parse_tool_arguments
+from nar.providers.base import (
+    DEFAULT_MAX_TOKENS,
+    LLMProvider,
+    parse_tool_arguments,
+    unknown_model_error,
+)
 from nar.providers.messages import (
     LLMResponse,
     Message,
@@ -20,7 +25,14 @@ from nar.providers.messages import (
     ToolDefinitions,
     Usage,
 )
-from nar.providers.retry import ErrorContext, OnRetry, RetryPolicy, stream_with_retries
+from nar.providers.retry import (
+    CHECK_TIMEOUT,
+    ErrorContext,
+    OnRetry,
+    RetryPolicy,
+    call_once,
+    stream_with_retries,
+)
 
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 REQUEST_TIMEOUT = 120.0
@@ -69,6 +81,23 @@ class AnthropicProvider(LLMProvider):
         return stream_with_retries(
             lambda: self._attempt(request), self.context, self.policy, self.on_retry
         )
+
+    def check(self) -> None:
+        """Look the model up: it accepts aliases, which the model list leaves out."""
+        client = self.client.with_options(timeout=CHECK_TIMEOUT)
+
+        def found() -> bool:
+            try:
+                client.models.retrieve(self.model)
+            except anthropic.NotFoundError:
+                return False
+            return True
+
+        if not call_once(found, self.context, CHECK_TIMEOUT):
+            names = call_once(
+                lambda: [model.id for model in client.models.list()], self.context, CHECK_TIMEOUT
+            )
+            raise unknown_model_error(self.name, self.model, names)
 
     def _attempt(self, request: dict[str, Any]) -> Iterator[StreamEvent]:
         text: list[str] = []
