@@ -31,6 +31,7 @@ def run(
     """
     # Imported here: the provider SDKs are slow to import.
     from nar.cli import slash
+    from nar.cli.fallback import retry_elsewhere
     from nar.cli.prompt import read_line
     from nar.cli.runner import (
         connect_mcp,
@@ -40,6 +41,7 @@ def run(
         show_context_usage,
     )
     from nar.ui.agent_view import AgentView
+    from nar.ui.provider_menu import ProviderMenu
     from nar.ui.session_view import render_history
 
     if instructions is not None:
@@ -77,4 +79,6 @@ def run(
                 view.cancelled()
             except ProviderError as exc:
                 view.error(exc.message)
+                # No balance, quota or down: offer the other providers and run it again.
+                retry_elsewhere(agent, view, line, recorder, exc, ProviderMenu(view.err))
             show_context_usage(agent, view)
