@@ -322,3 +322,17 @@ def test_list_models_returns_the_names():
     api = ModelsAPI({"/v1/models": (200, MODEL_LIST)})
     assert checked_provider(api).list_models() == ["claude-sonnet-5-5", "claude-opus-5-5"]
     assert api.paths == ["/v1/models"]
+
+
+def test_low_credit_balance_is_marked_as_unavailable():
+    error = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "Your credit balance is too low to access the Anthropic API.",
+        },
+    }
+    with pytest.raises(ProviderError) as info:
+        make_provider(FakeAPI((400, error))).complete([Message.user("x")])
+    assert "credit balance is too low" in info.value.message
+    assert info.value.unavailable

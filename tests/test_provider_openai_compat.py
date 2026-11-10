@@ -487,3 +487,36 @@ def test_ollama_list_models_fails_once_when_ollama_is_not_running():
         ollama(api).list_models()
     assert len(api.paths) == 1
     assert "ollama serve" in info.value.message
+
+
+def test_no_balance_is_marked_as_unavailable():
+    api = FakeAPI((402, {"error": {"message": "Insufficient Balance"}}))
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).complete([Message.user("x")])
+    assert info.value.unavailable
+
+
+def test_retries_exhausted_are_marked_as_unavailable():
+    api = FakeAPI(*[(429, {"error": {"message": "Rate limit"}}) for _ in range(4)])
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).complete([Message.user("x")])
+    assert "after 4 attempts" in info.value.message
+    assert info.value.unavailable
+
+
+def test_an_unreachable_server_is_marked_as_unavailable():
+    api = FakeAPI(*[httpx2.ConnectError("Connection refused") for _ in range(4)])
+    with pytest.raises(ProviderError) as info:
+        ollama(api).complete([Message.user("x")])
+    assert info.value.unavailable
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [(401, "Authentication Fails"), (404, "model not found"), (400, "Bad request")],
+)
+def test_user_mistakes_are_not_marked(status, message):
+    api = FakeAPI((status, {"error": {"message": message}}))
+    with pytest.raises(ProviderError) as info:
+        deepseek(api).complete([Message.user("x")])
+    assert not info.value.unavailable

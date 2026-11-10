@@ -1681,6 +1681,86 @@ def test_ctrl_c_while_listing_cancels_only_the_listing(runner, fake_provider):
     assert "still here" in result.stdout
 
 
+NO_BALANCE = "deepseek account has insufficient balance; top up at platform.deepseek.com"
+
+
+@pytest.fixture
+def menu_at_a_terminal(monkeypatch):
+    monkeypatch.setattr("nar.ui.provider_menu.ProviderMenu.available", lambda self: True)
+
+
+def test_no_balance_offers_the_other_providers_and_retries_there(
+    runner, monkeypatch, menu_at_a_terminal
+):
+    first, second = two_providers(monkeypatch)
+    first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
+    second.script = [LLMResponse("answered by the second provider")]
+    result = runner.invoke(main, [], input="fix the bug\n3\n/model\nexit\n")
+    assert result.exit_code == 0
+    stderr = result.stderr
+    assert f"error: {NO_BALANCE}" in stderr
+    assert "fake can't answer. Continue with another provider?" in stderr
+    assert "1. anthropic" in stderr and "4. deepseek" in stderr
+    assert "no key: it will ask for one" in stderr
+    assert "local, no key" in stderr
+    assert "Choose 1-4:" in stderr
+    assert "model: ollama · qwen2.5-coder" in stderr
+    assert "answered by the second provider" in result.stdout
+    # The failed request was rolled back: the retry sends "fix the bug" once.
+    users = [m.content for m in second.requests[0] if m.role == "user"]
+    assert users == ["fix the bug"]
+    assert "provider ollama, model qwen2.5-coder" in stderr
+
+
+def test_enter_at_the_list_stays_on_the_provider(runner, monkeypatch, menu_at_a_terminal):
+    first, second = two_providers(monkeypatch)
+    first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
+    result = runner.invoke(main, [], input="fix the bug\n\n/model\nexit\n")
+    assert result.exit_code == 0
+    assert "Enter: stay on fake" in result.stderr
+    assert "provider fake, model fake-model" in result.stderr
+    assert second.requests == []
+    assert second.checks == 0
+
+
+def test_a_pick_that_fails_its_check_shows_the_list_again(runner, monkeypatch, menu_at_a_terminal):
+    first, second = two_providers(monkeypatch)
+    first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
+    second.check_error = ProviderError(OLLAMA_DOWN, "ollama", unavailable=True)
+    result = runner.invoke(main, [], input="fix the bug\n3\n\nexit\n")
+    assert result.exit_code == 0
+    assert OLLAMA_DOWN in result.stderr
+    assert result.stderr.count("can't answer. Continue with another provider?") == 2
+    assert second.requests == []
+
+
+def test_a_second_failure_offers_the_list_without_the_tried_providers(
+    runner, monkeypatch, menu_at_a_terminal
+):
+    first, second = two_providers(monkeypatch)
+    first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
+    second.script = [ProviderError("ollama failed after 4 attempts", "ollama", unavailable=True)]
+    result = runner.invoke(main, [], input="fix the bug\n3\n\nexit\n")
+    assert result.exit_code == 0
+    assert "Choose 1-4:" in result.stderr
+    assert "ollama can't answer" in result.stderr
+    assert "Choose 1-3:" in result.stderr  # without the one tried
+
+
+def test_a_user_mistake_offers_no_list(runner, fake_provider, menu_at_a_terminal):
+    fake_provider.script = [ProviderError("deepseek rejected the API key; check X", "deepseek")]
+    result = runner.invoke(main, [], input="fix the bug\nexit\n")
+    assert "rejected the API key" in result.stderr
+    assert "Continue with another provider?" not in result.stderr
+
+
+def test_piped_input_offers_no_list(runner, fake_provider):
+    fake_provider.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
+    result = runner.invoke(main, [], input="fix the bug\nexit\n")
+    assert NO_BALANCE in result.stderr
+    assert "Continue with another provider?" not in result.stderr
+
+
 def test_approval_shows_changes_and_rejects_levels(runner, fake_provider):
     result = runner.invoke(main, [], input="/approval\n/approval yolo\n/approval nope\nexit\n")
     assert "approval ask" in result.stderr
