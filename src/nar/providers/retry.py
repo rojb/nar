@@ -123,7 +123,7 @@ def call_once(call: Callable[[], T], context: ErrorContext, timeout: float) -> T
         raise
     except TIMEOUT_ERRORS as exc:  # before CONNECTION_ERRORS: the SDKs subclass them
         message = f"{context.provider} did not answer within {timeout:g} seconds"
-        raise ProviderError(message, context.provider) from exc
+        raise ProviderError(message, context.provider, unavailable=True) from exc
     except Exception as exc:
         raise translate_error(exc, context) from exc
 
@@ -147,10 +147,16 @@ def retry_reason(exc: Exception) -> str | None:
 
 def translate_error(exc: Exception, context: ErrorContext) -> ProviderError:
     provider = context.provider
+    unavailable = False
     if isinstance(exc, CONNECTION_ERRORS):
         message = context.unreachable_hint or f"cannot reach {provider}: {_one_line(str(exc))}"
+        unavailable = True
     elif isinstance(exc, STATUS_ERRORS):
         status = exc.status_code
+        # No balance: HTTP 402, or Anthropic's 400 "Your credit balance is too low...".
+        unavailable = status == 402 or (
+            status == 400 and "credit balance" in _api_message(exc).lower()
+        )
         if status in context.status_hints:
             message = context.status_hints[status]
         elif status in (401, 403) and context.api_key_env:
@@ -161,7 +167,7 @@ def translate_error(exc: Exception, context: ErrorContext) -> ProviderError:
             message = f"{provider} rejected the request ({status}): {_api_message(exc)}"
     else:
         message = f"{provider} request failed ({type(exc).__name__}): {_one_line(str(exc))}"
-    return ProviderError(message, provider)
+    return ProviderError(message, provider, unavailable=unavailable)
 
 
 def _is_unknown_model(exc: Exception, status: int, context: ErrorContext) -> bool:
@@ -174,11 +180,14 @@ def _is_unknown_model(exc: Exception, status: int, context: ErrorContext) -> boo
 
 
 def _exhausted(exc: Exception, context: ErrorContext, attempts: int) -> ProviderError:
+    # Only retryable failures get here, so the provider cannot answer right now.
     if isinstance(exc, CONNECTION_ERRORS) and context.unreachable_hint:
-        return ProviderError(context.unreachable_hint, context.provider)
+        return ProviderError(context.unreachable_hint, context.provider, unavailable=True)
     detail = translate_error(exc, context).message
     return ProviderError(
-        f"{context.provider} failed after {attempts} attempts: {detail}", context.provider
+        f"{context.provider} failed after {attempts} attempts: {detail}",
+        context.provider,
+        unavailable=True,
     )
 
 

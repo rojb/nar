@@ -32,9 +32,13 @@ class ConfigError(NarError):
 class ProviderError(NarError):
     """An LLM provider could not be used or rejected a request."""
 
-    def __init__(self, message: str, provider: str, exit_code: int = 1) -> None:
+    def __init__(
+        self, message: str, provider: str, exit_code: int = 1, *, unavailable: bool = False
+    ) -> None:
         super().__init__(message, exit_code)
         self.provider = provider
+        # True when the provider cannot answer now (no balance, quota, down), not a user mistake.
+        self.unavailable = unavailable
 
 
 class ToolError(NarError):
