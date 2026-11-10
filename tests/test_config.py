@@ -418,6 +418,16 @@ def test_context_limit_defaults_are_shown(home, project):
     assert "context_threshold = 80  (default)" in described
 
 
+def test_context_window_set_tells_a_user_value_from_the_default(home, project):
+    assert load_config(project).config.context_window_set is False
+    assert load_config(project, overrides={"provider": "ollama"}).config.context_window_set is False
+    write(project / ".nar" / "config.toml", "context_window = 32000\n")
+    assert load_config(project).config.context_window_set is True
+    # The same number as the default still counts as the user's choice.
+    write(project / ".nar" / "config.toml", "context_window = 128000\n")
+    assert load_config(project).config.context_window_set is True
+
+
 def test_context_window_from_a_file_wins_with_any_provider(home, project):
     write(project / ".nar" / "config.toml", 'provider = "ollama"\ncontext_window = 32000\n')
     loaded = load_config(project)

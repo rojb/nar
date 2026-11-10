@@ -26,6 +26,7 @@ from nar.agent import (
 from nar.agent.subagent import TaskTool
 from nar.cli.api_key import keep_api_key, obtain_api_key, prepare_api_key
 from nar.config import NarConfig, ProviderName
+from nar.config.models import DEFAULT_CONTEXT_WINDOWS
 from nar.context import ProjectInstructions
 from nar.context.compaction import CompactionError, Compactor, ContextLimits
 from nar.context.manager import ContextManager
@@ -67,7 +68,9 @@ def create_agent(
     context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
     registry = create_default_registry(cwd)
     prompter = TerminalPrompter(view.tools)
-    limits = ContextLimits(config.context_window, config.context_threshold)
+    limits = ContextLimits(
+        config.context_window, config.context_threshold, fixed=config.context_window_set
+    )
     hooks = (
         HookRunner(
             config.hooks,
@@ -203,6 +206,9 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
     agent.provider = provider
     if agent.compactor is not None:
         agent.compactor.provider = provider  # the summary must not go to the old one
+        limits = agent.compactor.limits
+        if not limits.fixed:  # the new provider's window, unless the user set one (RRG-90)
+            agent.compactor.limits = replace(limits, window=DEFAULT_CONTEXT_WINDOWS[provider_name])
     view.waiting_text = f"waiting for {provider.model}..."
     view.note(f"model: {provider.name} · {provider.model}")
 

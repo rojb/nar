@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 
 class ApprovalLevel(StrEnum):
@@ -146,10 +146,19 @@ class NarConfig(BaseModel):
             seen[key] = name
         return servers
 
+    # Whether a file or a flag set context_window; False when it is the provider's default.
+    _context_window_set: bool = PrivateAttr(default=False)
+
     @model_validator(mode="after")
     def _default_model_for_provider(self) -> NarConfig:
         if self.model is None:
             self.model = DEFAULT_MODELS[self.provider]
+        self._context_window_set = self.context_window is not None
         if self.context_window is None:
             self.context_window = DEFAULT_CONTEXT_WINDOWS[self.provider]
         return self
+
+    @property
+    def context_window_set(self) -> bool:
+        """True when the user chose the window, so a provider switch must keep it (RRG-90)."""
+        return self._context_window_set

@@ -51,6 +51,8 @@ class ContextLimits:
 
     window: int
     threshold: int = 80
+    # The user set the window: a provider switch keeps it instead of taking the new default.
+    fixed: bool = False
 
     @property
     def limit(self) -> int:
