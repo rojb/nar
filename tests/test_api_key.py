@@ -128,6 +128,62 @@ def test_prompter_is_not_available_without_a_terminal():
     assert not redirected.available()
 
 
+# Pasted keys (RRG-91)
+
+
+def pasting(*answers):
+    """A terminal prompter that reads each answer in turn at the hidden prompt."""
+    out = TTY()
+    queue = iter(answers)
+    console = Console(file=out, force_terminal=False, width=200)
+    prompter = KeyPrompter(console, stdin=TTY(), read_secret=lambda prompt: next(queue))
+    return prompter, out
+
+
+@pytest.mark.parametrize("pasted", ["\x16", f"{SECRET}\x16"])
+def test_ctrl_v_is_refused_with_the_right_click_hint_and_asked_again(pasted):
+    prompter, out = pasting(pasted, SECRET)
+    assert prompter.ask_key("DEEPSEEK_API_KEY", "deepseek") == SECRET
+    text = out.getvalue()
+    assert "Ctrl+V does not paste here: paste with a right-click" in text
+    assert SECRET not in text
+
+
+@pytest.mark.parametrize(
+    "pasted",
+    [
+        f'"{SECRET}"',
+        f"'{SECRET}'",
+        f"DEEPSEEK_API_KEY={SECRET}",
+        f'  DEEPSEEK_API_KEY="{SECRET}"  ',
+    ],
+)
+def test_common_copy_mistakes_are_fixed(pasted):
+    prompter, out = pasting(pasted)
+    assert prompter.ask_key("DEEPSEEK_API_KEY", "deepseek") == SECRET
+    assert SECRET not in out.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("pasted", "reason"),
+    [
+        (f"{SECRET[:5]} {SECRET[5:]}", "a key has no spaces; paste it again"),
+        (f"{SECRET}\x01", "the key has invisible characters; paste it again"),
+        (f"{SECRET}\x7f", "the key has invisible characters; paste it again"),
+    ],
+)
+def test_spaces_and_other_control_characters_are_refused(pasted, reason):
+    prompter, out = pasting(pasted, SECRET)
+    assert prompter.ask_key("DEEPSEEK_API_KEY", "deepseek") == SECRET
+    assert reason in out.getvalue()
+    assert SECRET not in out.getvalue()
+
+
+def test_an_empty_answer_after_a_refused_one_still_cancels():
+    prompter, _ = pasting("\x16", "")
+    assert prompter.ask_key("DEEPSEEK_API_KEY", "deepseek") is None
+
+
 # obtain_api_key and keep_api_key
 
 
