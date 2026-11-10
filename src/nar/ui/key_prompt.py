@@ -17,6 +17,27 @@ from nar.ui.approval_prompt import _is_terminal
 
 _YES = {"y", "yes"}
 _NO = {"n", "no"}
+CTRL_V = "\x16"  # what Ctrl+V sends in the classic Windows console, where it does not paste
+
+
+def clean_key(env: str, text: str) -> tuple[str, str | None]:
+    """The key without common copy mistakes, and why it cannot be used (``None`` if it can).
+
+    Removes surrounding spaces, a leading ``<env>=`` and one pair of quotes. The reason never
+    contains the key.
+    """
+    key = text.strip()
+    if key.startswith(f"{env}="):
+        key = key[len(env) + 1 :].strip()
+    if len(key) >= 2 and key[0] == key[-1] and key[0] in "\"'":
+        key = key[1:-1].strip()
+    if CTRL_V in key:
+        return key, "Ctrl+V does not paste here: paste with a right-click"
+    if any(ord(char) < 32 or ord(char) == 127 for char in key):
+        return key, "the key has invisible characters; paste it again"
+    if any(char.isspace() for char in key):
+        return key, "a key has no spaces; paste it again"
+    return key, None
 
 
 class KeyPrompter:
@@ -39,16 +60,26 @@ class KeyPrompter:
         return _is_terminal(stdin) and _is_terminal(self._console.file)
 
     def ask_key(self, env: str, provider: str) -> str | None:
-        """The pasted key, or ``None`` for an empty answer, end of input or Ctrl+C."""
+        """The pasted key, or ``None`` for an empty answer, end of input or Ctrl+C.
+
+        A key that cannot be right (Ctrl+V, other invisible characters, spaces) is not
+        returned: the reason is shown, without the key, and the key is asked for again.
+        """
         self._console.print(Text(f"{env} is not set.", "yellow"), highlight=False)
         read = self._read_secret or getpass.getpass
-        try:
-            # getpass writes its prompt to the console itself, never to standard output.
-            key = read(f"Paste your {provider} API key (hidden; Enter to cancel): ")
-        except (EOFError, KeyboardInterrupt):
-            self._console.print()
-            return None
-        return key.strip() or None
+        while True:
+            try:
+                # getpass writes its prompt to the console itself, never to standard output.
+                pasted = read(f"Paste your {provider} API key (hidden; Enter to cancel): ")
+            except (EOFError, KeyboardInterrupt):
+                self._console.print()
+                return None
+            if not pasted.strip():
+                return None
+            key, reason = clean_key(env, pasted)
+            if reason is None:
+                return key
+            self._console.print(Text(reason, "yellow"), highlight=False)
 
     def ask_save(self, env: str) -> bool:
         """An empty or unknown answer asks again; end of input and Ctrl+C mean no."""
