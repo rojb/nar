@@ -14,8 +14,8 @@ from typing import TypeVar
 import anthropic
 import openai
 
-from nar.errors import ProviderError
-from nar.i18n import t, t_en
+from nar.errors import ProviderError, provider_error
+from nar.i18n import Message, t, t_en
 from nar.providers.messages import StreamEvent
 
 STATUS_ERRORS = (anthropic.APIStatusError, openai.APIStatusError)
@@ -80,8 +80,10 @@ class ErrorContext:
     provider: str
     model: str
     api_key_env: str | None = None
-    unreachable_hint: str | None = None  # message when the server cannot be reached
-    status_hints: Mapping[int, str] = field(default_factory=dict)  # fixed message per status
+    # Fixed messages: a plain string, or a ``Message`` worded in the user's language (and in
+    # English for the model). Shown when the server cannot be reached, and per HTTP status.
+    unreachable_hint: str | Message | None = None
+    status_hints: Mapping[int, str | Message] = field(default_factory=dict)
     # Some servers answer an unknown model with 400 or 422 instead of 404: a
     # case-insensitive fragment of their message that identifies it.
     unknown_model_pattern: str | None = None
@@ -142,8 +144,13 @@ def call_once(call: Callable[[], T], context: ErrorContext, timeout: float) -> T
     except ProviderError:
         raise
     except TIMEOUT_ERRORS as exc:  # before CONNECTION_ERRORS: the SDKs subclass them
-        message = f"{context.provider} did not answer within {timeout:g} seconds"
-        raise ProviderError(message, context.provider, unavailable=True) from exc
+        raise provider_error(
+            "provider.timeout",
+            context.provider,
+            unavailable=True,
+            provider=context.provider,
+            seconds=f"{timeout:g}",
+        ) from exc
     except Exception as exc:
         raise translate_error(exc, context) from exc
 
@@ -171,12 +178,28 @@ def _retry_kind(exc: Exception) -> tuple[str, int | None] | None:
     return None
 
 
+def _hint_error(hint: str | Message, provider: str, *, unavailable: bool) -> ProviderError:
+    """A ``ProviderError`` for a fixed hint: a ``Message`` is worded twice, a string is as is."""
+    if isinstance(hint, Message):
+        return ProviderError(
+            str(hint), provider, unavailable=unavailable, model_message=hint.english()
+        )
+    return ProviderError(hint, provider, unavailable=unavailable)
+
+
 def translate_error(exc: Exception, context: ErrorContext) -> ProviderError:
     provider = context.provider
     unavailable = False
     if isinstance(exc, CONNECTION_ERRORS):
-        message = context.unreachable_hint or f"cannot reach {provider}: {_one_line(str(exc))}"
-        unavailable = True
+        if context.unreachable_hint:
+            return _hint_error(context.unreachable_hint, provider, unavailable=True)
+        return provider_error(
+            "provider.unreachable",
+            provider,
+            unavailable=True,
+            provider=provider,
+            detail=_one_line(str(exc)),
+        )
     elif isinstance(exc, STATUS_ERRORS):
         status = exc.status_code
         # No balance: HTTP 402, or Anthropic's 400 "Your credit balance is too low...".
@@ -184,16 +207,38 @@ def translate_error(exc: Exception, context: ErrorContext) -> ProviderError:
             status == 400 and "credit balance" in _api_message(exc).lower()
         )
         if status in context.status_hints:
-            message = context.status_hints[status]
-        elif status in (401, 403) and context.api_key_env:
-            message = f"{provider} rejected the API key; check {context.api_key_env}"
-        elif status == 404 or _is_unknown_model(exc, status, context):
-            message = f"model '{context.model}' was not found by {provider}"
-        else:
-            message = f"{provider} rejected the request ({status}): {_api_message(exc)}"
-    else:
-        message = f"{provider} request failed ({type(exc).__name__}): {_one_line(str(exc))}"
-    return ProviderError(message, provider, unavailable=unavailable)
+            return _hint_error(context.status_hints[status], provider, unavailable=unavailable)
+        if status in (401, 403) and context.api_key_env:
+            return provider_error(
+                "provider.key_rejected",
+                provider,
+                unavailable=unavailable,
+                provider=provider,
+                env=context.api_key_env,
+            )
+        if status == 404 or _is_unknown_model(exc, status, context):
+            return provider_error(
+                "provider.model_not_found",
+                provider,
+                unavailable=unavailable,
+                model=context.model,
+                provider=provider,
+            )
+        return provider_error(
+            "provider.rejected",
+            provider,
+            unavailable=unavailable,
+            provider=provider,
+            status=status,
+            detail=_api_message(exc),
+        )
+    return provider_error(
+        "provider.request_failed",
+        provider,
+        provider=provider,
+        kind=type(exc).__name__,
+        detail=_one_line(str(exc)),
+    )
 
 
 def _is_unknown_model(exc: Exception, status: int, context: ErrorContext) -> bool:
@@ -208,12 +253,20 @@ def _is_unknown_model(exc: Exception, status: int, context: ErrorContext) -> boo
 def _exhausted(exc: Exception, context: ErrorContext, attempts: int) -> ProviderError:
     # Only retryable failures get here, so the provider cannot answer right now.
     if isinstance(exc, CONNECTION_ERRORS) and context.unreachable_hint:
-        return ProviderError(context.unreachable_hint, context.provider, unavailable=True)
-    detail = translate_error(exc, context).message
-    return ProviderError(
-        f"{context.provider} failed after {attempts} attempts: {detail}",
+        return _hint_error(context.unreachable_hint, context.provider, unavailable=True)
+    cause = translate_error(exc, context)
+    return provider_error(
+        "provider.exhausted",
         context.provider,
         unavailable=True,
+        model_values={
+            "provider": context.provider,
+            "attempts": attempts,
+            "detail": cause.model_message,
+        },
+        provider=context.provider,
+        attempts=attempts,
+        detail=cause.message,
     )
 
 

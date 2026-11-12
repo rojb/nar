@@ -139,7 +139,7 @@ class TaskTool(Tool):
                     elif isinstance(event, LoopAborted):
                         ending = "it stopped because it kept repeating the same tool calls"
         except ProviderError as exc:
-            return ToolResult.error(f"the {kind.name} subagent failed: {exc.message}")
+            return ToolResult.error(f"the {kind.name} subagent failed: {exc.model_message}")
         if ending is not None:
             answer = _last_text(conversation)
         if not answer.strip():

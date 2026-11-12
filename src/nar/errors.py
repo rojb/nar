@@ -33,12 +33,45 @@ class ProviderError(NarError):
     """An LLM provider could not be used or rejected a request."""
 
     def __init__(
-        self, message: str, provider: str, exit_code: int = 1, *, unavailable: bool = False
+        self,
+        message: str,
+        provider: str,
+        exit_code: int = 1,
+        *,
+        unavailable: bool = False,
+        model_message: str | None = None,
     ) -> None:
         super().__init__(message, exit_code)
         self.provider = provider
+        # ``message`` is for the user, in the interface language. A subagent hands the failure
+        # to the model, which always gets English: ``model_message``.
+        self.model_message = message if model_message is None else model_message
         # True when the provider cannot answer now (no balance, quota, down), not a user mistake.
         self.unavailable = unavailable
+
+
+def provider_error(
+    key: str,
+    provider: str,
+    /,
+    *,
+    unavailable: bool = False,
+    model_values: dict[str, object] | None = None,
+    **values: object,
+) -> ProviderError:
+    """A ``ProviderError`` worded from the catalog: translated for the user, English for the model.
+
+    ``model_values`` replaces ``values`` for the English text, for a value that is itself worded
+    twice (the detail of an earlier error).
+    """
+    from nar.i18n import t, t_en
+
+    return ProviderError(
+        t(key, **values),
+        provider,
+        unavailable=unavailable,
+        model_message=t_en(key, **(values if model_values is None else model_values)),
+    )
 
 
 class ToolError(NarError):

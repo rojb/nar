@@ -1,6 +1,7 @@
 """Output produced before the configuration is loaded: help, parse errors, boundary (RRG-98)."""
 
 import gettext
+import importlib
 
 import click
 import pytest
@@ -9,9 +10,13 @@ from click.testing import CliRunner
 from nar import __version__
 from nar.cli import main
 from nar.cli.main import build_command, preresolve_language
+from nar.errors import NarError
 from nar.i18n import click_words, set_language
 from nar.i18n.messages_en import MESSAGES as MESSAGES_EN
 from test_cli import _Runner
+
+# `nar.cli.main` the attribute is the function; fetch the module explicitly.
+cli_module = importlib.import_module("nar.cli.main")
 
 
 @pytest.fixture
@@ -325,3 +330,96 @@ def test_every_message_id_in_the_table_is_asked_for_by_click(monkeypatch, runner
 
     missing = set(click_words.message_ids()) - asked
     assert not missing, f"Click no longer asks for: {sorted(missing)}"
+
+
+# --- the error boundary and the configuration error (5.3) ----------------------------------
+
+
+def _fail_with(monkeypatch, error):
+    def run(**_params):
+        raise error
+
+    monkeypatch.setattr(cli_module, "_run", run)
+
+
+def test_a_nar_error_prints_error_prefix_in_both_languages(runner, workdir, monkeypatch):
+    _fail_with(monkeypatch, NarError("something specific"))
+    for args in ([], ["--language", "en"]):
+        result = runner.invoke(main, args, interface=None)
+        assert result.exit_code == 1
+        assert result.stderr == "error: something specific\n"
+
+
+def test_an_unexpected_failure_is_in_spanish_by_default(runner, workdir, monkeypatch):
+    _fail_with(monkeypatch, RuntimeError("boom"))
+    result = runner.invoke(main, [], interface=None)
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "error: fallo inesperado (RuntimeError): boom\n"
+        "pista: define NAR_DEBUG=1 para ver el traceback completo\n"
+    )
+
+
+def test_an_unexpected_failure_in_english_is_unchanged(runner, workdir, monkeypatch):
+    _fail_with(monkeypatch, RuntimeError("boom"))
+    result = runner.invoke(main, ["--language", "en"], interface=None)
+    assert result.stderr == (
+        "error: unexpected failure (RuntimeError): boom\n"
+        "hint: set NAR_DEBUG=1 to see the full traceback\n"
+    )
+
+
+def test_the_traceback_replaces_the_hint_with_nar_debug(runner, workdir, monkeypatch):
+    monkeypatch.setenv("NAR_DEBUG", "1")
+    _fail_with(monkeypatch, RuntimeError("boom"))
+    result = runner.invoke(main, [], interface=None)
+    assert "Traceback" in result.stderr
+    assert "pista:" not in result.stderr
+
+
+@pytest.mark.parametrize(("args", "word"), [([], "cancelado"), (["--language", "en"], "cancelled")])
+def test_ctrl_c_prints_cancelled_in_the_pre_resolved_language(
+    runner, workdir, monkeypatch, args, word
+):
+    _fail_with(monkeypatch, KeyboardInterrupt())
+    result = runner.invoke(main, args, interface=None)
+    assert result.exit_code == 130
+    assert result.stderr.strip() == word
+
+
+def test_a_config_error_is_shown_in_the_language_of_the_files(runner, workdir):
+    _user_config(workdir, 'language = "en"\n')
+    _project_config(workdir, 'approval = "bogus"\n')
+    result = runner.invoke(main, ["hello"], interface=None)
+    assert result.exit_code == 1
+    assert result.stderr.startswith("error: invalid value")
+    assert "allowed values" in result.stderr
+    assert "valores permitidos" not in result.stderr
+
+
+def test_a_config_error_with_no_language_anywhere_is_spanish(runner, workdir):
+    _project_config(workdir, 'approval = "bogus"\n')
+    result = runner.invoke(main, ["hello"], interface=None)
+    assert result.exit_code == 1
+    assert result.stderr.startswith("error: valor no válido")
+    assert "valores permitidos" in result.stderr
+
+
+def test_a_broken_file_error_follows_the_language_option(runner, workdir):
+    _project_config(workdir, "this is [not toml")
+    spanish = runner.invoke(main, ["hello"], interface=None)
+    english = runner.invoke(main, ["--language", "en", "hello"], interface=None)
+    assert spanish.exit_code == english.exit_code == 1
+    assert spanish.stderr.startswith("error: ")
+    assert spanish.stderr != english.stderr
+    assert "invalid TOML" in english.stderr and "TOML no válido" in spanish.stderr
+
+
+def test_the_final_language_comes_from_the_validated_configuration(runner, workdir):
+    from nar.i18n import current_language
+
+    _user_config(workdir, 'language = "en"\n')
+    runner.invoke(main, ["--show-config"], interface=None)
+    assert current_language() == "en"
+    runner.invoke(main, ["--language", "es", "--show-config"], interface=None)
+    assert current_language() == "es"

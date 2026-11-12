@@ -201,7 +201,7 @@ def _run_command(argv: list[str] | None) -> None:
         result = build_command().main(args=argv, standalone_mode=False)
     except click.exceptions.Abort:
         # Ctrl+C: Click turns KeyboardInterrupt into Abort. 130 is the shell's SIGINT code.
-        click.secho("cancelled", fg="yellow", err=True)
+        click.secho(t("agent.cancelled"), fg="yellow", err=True)
         sys.exit(130)
     except click.ClickException as exc:
         exc.show()
@@ -212,10 +212,11 @@ def _run_command(argv: list[str] | None) -> None:
             traceback.print_exc()
         sys.exit(exc.exit_code)
     except Exception as exc:
-        click.secho(f"error: unexpected failure ({type(exc).__name__}): {exc}", fg="red", err=True)
+        message = t("main.unexpected", kind=type(exc).__name__, detail=exc)
+        click.secho(message, fg="red", err=True)
         if _debug_enabled():
             traceback.print_exc()
         else:
-            click.echo("hint: set NAR_DEBUG=1 to see the full traceback", err=True)
+            click.echo(t("main.debug_hint"), err=True)
         sys.exit(1)
     sys.exit(result if isinstance(result, int) else 0)

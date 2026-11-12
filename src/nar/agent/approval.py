@@ -109,7 +109,7 @@ class ApprovalGate:
             return tool.preview(dict(arguments), self._context)
         except Exception:
             fallback = Tool.preview(tool, dict(arguments), self._context)
-            note = "(preview unavailable; showing the raw arguments)"
+            note = t("approval.preview_unavailable")
             return ToolPreview(title=fallback.title, detail=f"{note}\n{fallback.detail}")
 
 

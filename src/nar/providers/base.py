@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
-from nar.errors import ProviderError
+from nar.errors import ProviderError, provider_error
 from nar.providers.messages import (
     LLMResponse,
     Message,
@@ -51,7 +51,7 @@ class LLMProvider(ABC):
 
     def list_models(self) -> list[str]:
         """The names of the provider's models; costs no tokens. ``ProviderError`` if it can't."""
-        raise ProviderError(f"{self.name} cannot list its models", self.name)
+        raise provider_error("provider.cannot_list", self.name, provider=self.name)
 
     def complete(
         self,
@@ -65,16 +65,21 @@ class LLMProvider(ABC):
         for event in self.stream(messages, system=system, tools=tools, max_tokens=max_tokens):
             if isinstance(event, ResponseDone):
                 return event.response
-        raise ProviderError(f"{self.name} ended the response without finishing it", self.name)
+        raise provider_error("provider.no_finish", self.name, provider=self.name)
 
 
 def unknown_model_error(provider: str, model: str, available: Iterable[str]) -> ProviderError:
     """``model 'x' was not found by p``, with up to three close names when there are any."""
-    message = f"model '{model}' was not found by {provider}"
     close = difflib.get_close_matches(model, list(available), n=3, cutoff=0.8)
     if close:
-        message += f"; did you mean {', '.join(close)}?"
-    return ProviderError(message, provider)
+        return provider_error(
+            "provider.model_not_found_close",
+            provider,
+            model=model,
+            provider=provider,
+            names=", ".join(close),
+        )
+    return provider_error("provider.model_not_found", provider, model=model, provider=provider)
 
 
 def parse_tool_arguments(raw: str) -> dict[str, Any]:
