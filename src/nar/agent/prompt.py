@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import platform
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
 
 from nar.context.instructions import ProjectInstructions
+from nar.skills import Skill
 
 IDENTITY = """\
 You are nar, a coding agent running in the user's terminal. You help with software \
@@ -42,17 +43,20 @@ def build_system_prompt(
     cwd: Path,
     instructions: ProjectInstructions | None = None,
     memory: Mapping[str, str] | None = None,
+    skills: Sequence[Skill] = (),
     *,
     platform_name: str | None = None,
     today: date | None = None,
 ) -> str:
-    """Identity, guidelines, environment, then saved memory and ``AGENTS.md`` when present."""
+    """Identity, guidelines, environment, then memory, ``AGENTS.md`` and skills when present."""
     sections = [IDENTITY, GUIDELINES, _environment(cwd, platform_name, today)]
     if memory:
         facts = "\n".join(f"- {key}: {value}" for key, value in memory.items())
         sections.append(f"# Memory (saved in earlier sessions)\n{facts}")
     if instructions is not None:
         sections.append(_project_instructions(instructions))
+    if skills:
+        sections.append(_skills(skills))
     return "\n\n".join(sections)
 
 
@@ -90,4 +94,15 @@ def _project_instructions(instructions: ProjectInstructions) -> str:
         f"# Project instructions (from {instructions.path})\n"
         "Follow these instructions from the project's AGENTS.md:\n\n"
         f"{instructions.content.strip()}"
+    )
+
+
+def _skills(skills: Sequence[Skill]) -> str:
+    listing = "\n".join(f"- {skill.name}: {skill.description}" for skill in skills)
+    return (
+        "# Skills\n"
+        "Skills are specialized instructions. Before working on a request that matches a "
+        "skill's description, call the skill tool with its name and follow the instructions "
+        "it returns.\n\n"
+        f"{listing}"
     )

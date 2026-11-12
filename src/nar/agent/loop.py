@@ -29,6 +29,7 @@ from nar.errors import ProviderError
 from nar.hooks import HookRunner
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, ResponseDone, StopReason, TextDelta, ToolCall
+from nar.skills import Skill
 from nar.tools.base import FailureKind, Tool, ToolResult
 from nar.tools.registry import ToolRegistry
 
@@ -59,6 +60,7 @@ class Agent:
         self.compactor = compactor
         self.detector = detector
         self.hooks = hooks
+        self.skills: tuple[Skill, ...] = ()  # set by the CLI; read by /skills and /skill
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:
         """Handle one user request, yielding what happens.
