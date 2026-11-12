@@ -60,6 +60,7 @@ class Agent:
         self.compactor = compactor
         self.detector = detector
         self.hooks = hooks
+        self.provider_switched = False  # set by /model (and the fallback menu) once it changes it
         self.skills: tuple[Skill, ...] = ()  # set by the CLI; read by /skills and /skill
 
     def run(self, prompt: str) -> Iterator[AgentEvent]:

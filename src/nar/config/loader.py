@@ -31,6 +31,10 @@ class LoadedConfig:
     user_path: Path | None = None
     project_path: Path | None = None
 
+    def source_of(self, key: str, cwd: Path | None = None) -> str:
+        """Where the dotted ``key`` got its value, worded as ``--show-config`` words it."""
+        return _display_source(self.provenance.get(key, DEFAULT_SOURCE), cwd)
+
     def describe(self, cwd: Path | None = None) -> list[str]:
         """Lines ``key = value  (source)`` for ``--show-config``."""
         flat: dict[str, Any] = {}

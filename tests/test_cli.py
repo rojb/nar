@@ -1405,10 +1405,26 @@ def test_help_lists_every_command_on_stderr_only(runner, fake_provider):
     assert fake_provider.requests == []
 
 
-def test_model_alone_shows_the_current_one(runner, fake_provider):
+def test_model_alone_shows_the_current_one_and_where_each_comes_from(runner, fake_provider):
     result = runner.invoke(main, [], input="/model\nexit\n")
-    assert "provider fake, model fake-model" in result.stderr
+    assert "provider fake (default), model fake-model (default)" in result.stderr
     assert fake_provider.requests == []
+
+
+def test_model_alone_names_the_command_line_as_the_source(runner, fake_provider):
+    result = runner.invoke(
+        main, ["--provider", "ollama", "--model", "qwen2.5-coder"], input="/model\nexit\n"
+    )
+    assert "provider fake (command line), model fake-model (command line)" in result.stderr
+
+
+def test_model_alone_after_a_switch_says_it_was_set_with_model(runner, monkeypatch):
+    two_providers(monkeypatch)
+    result = runner.invoke(main, [], input="/model ollama\n/model\nexit\n")
+    assert (
+        "provider ollama (set in this session with /model), "
+        "model qwen2.5-coder (set in this session with /model)"
+    ) in result.stderr
 
 
 def test_model_switches_and_the_conversation_continues(runner, monkeypatch):
@@ -1503,7 +1519,7 @@ def test_model_keeps_the_previous_provider_when_the_check_fails(runner, monkeypa
     assert result.exit_code == 0
     assert f"error: {OLLAMA_DOWN}; still using fake · fake-model" in result.stderr
     assert "model: ollama" not in result.stderr
-    assert "provider fake, model fake-model" in result.stderr
+    assert "provider fake (default), model fake-model (default)" in result.stderr
     assert "still here" in result.stdout
     assert second.requests == []
     assert "<transcript>" in first.requests[2][0].content  # compaction stayed too
@@ -1614,7 +1630,7 @@ def test_models_lists_the_provider_in_use_and_marks_its_model(runner, fake_provi
     assert "fake: 3 models" in stderr
     assert stderr.index("  alpha-model") < stderr.index("  fake-model  ← in use")
     assert stderr.index("  fake-model  ← in use") < stderr.index("  zeta-model")
-    assert "provider fake, model fake-model" in stderr  # nothing switched
+    assert "provider fake (default), model fake-model (default)" in stderr  # nothing switched
     assert "/models" not in result.stdout
     assert fake_provider.requests == []
 
@@ -1627,7 +1643,7 @@ def test_models_of_another_provider_does_not_switch(runner, monkeypatch):
     assert "ollama: 2 models" in result.stderr
     assert "  llama3:8b" in result.stderr
     assert "← in use" not in result.stderr  # the listed provider is not the one in use
-    assert "provider fake, model fake-model" in result.stderr
+    assert "provider fake (default), model fake-model (default)" in result.stderr
     assert second.config.provider.value == "ollama"
 
 
@@ -1671,7 +1687,7 @@ def test_models_for_a_provider_without_its_key_names_the_variable(runner, monkey
     monkeypatch.setattr("nar.providers.factory.create_provider", create)
     result = runner.invoke(main, [], input="/models anthropic\n/model\nexit\n")
     assert "error: ANTHROPIC_API_KEY is not set" in result.stderr
-    assert "provider fake, model fake-model" in result.stderr
+    assert "provider fake (default), model fake-model (default)" in result.stderr
 
 
 def test_ctrl_c_while_listing_cancels_only_the_listing(runner, fake_provider):
@@ -1711,7 +1727,7 @@ def test_no_balance_offers_the_other_providers_and_retries_there(
     # The failed request was rolled back: the retry sends "fix the bug" once.
     users = [m.content for m in second.requests[0] if m.role == "user"]
     assert users == ["fix the bug"]
-    assert "provider ollama, model qwen2.5-coder" in stderr
+    assert "provider ollama (set in this session with /model), model qwen2.5-coder" in stderr
 
 
 def test_enter_at_the_list_stays_on_the_provider(runner, monkeypatch, menu_at_a_terminal):
@@ -1720,7 +1736,7 @@ def test_enter_at_the_list_stays_on_the_provider(runner, monkeypatch, menu_at_a_
     result = runner.invoke(main, [], input="fix the bug\n\n/model\nexit\n")
     assert result.exit_code == 0
     assert "Enter: stay on fake" in result.stderr
-    assert "provider fake, model fake-model" in result.stderr
+    assert "provider fake (default), model fake-model (default)" in result.stderr
     assert second.requests == []
     assert second.checks == 0
 
