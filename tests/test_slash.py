@@ -161,7 +161,9 @@ def test_markup_like_text_is_printed_literally():
 def test_registered_commands_can_be_added_and_receive_their_argument(monkeypatch):
     monkeypatch.setattr(slash, "_COMMANDS", dict(slash._COMMANDS))
     seen = []
-    slash.register_command("echo", lambda context, argument: seen.append(argument), "echo")
+    slash.register_command(
+        "echo", lambda context, argument: seen.append(argument), "command.help.summary"
+    )
     context, _, err = make_context(None)
     assert slash.dispatch("/echo hello there", context) is True
     assert seen == ["hello there"]
