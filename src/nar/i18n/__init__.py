@@ -7,6 +7,9 @@ Text that goes to the model is not translated; see the README.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
 from nar.i18n.messages_en import MESSAGES as _EN
 from nar.i18n.messages_es import MESSAGES as _ES
 
@@ -62,6 +65,35 @@ def t_en(key: str, **values: object) -> str:
     return text.format(**values)
 
 
+@dataclass(frozen=True)
+class Message:
+    """A catalog key with its values, worded later: ``str(message)`` in the active language.
+
+    For a text that is built where the language is not yet known or that must also exist in
+    English for the model: ``english()`` is the same sentence in English.
+    """
+
+    key: str
+    values: Mapping[str, object] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        return t(self.key, **self.values)
+
+    def english(self) -> str:
+        return t_en(self.key, **self.values)
+
+
+def template(key: str) -> str:
+    """The text for ``key`` in the active language, with its ``{placeholders}`` left as they are.
+
+    For a library that fills the placeholders itself (Click does, see ``click_words``).
+    """
+    try:
+        return _CATALOGS[_active][key]
+    except KeyError:
+        raise UnknownMessageKey(key, _active) from None
+
+
 def tn(key: str, count: int, **values: object) -> str:
     """Like ``t`` for a text that depends on a count: uses ``<key>.one`` when ``count`` is 1.
 
@@ -74,10 +106,12 @@ def tn(key: str, count: int, **values: object) -> str:
 
 __all__ = [
     "DEFAULT_LANGUAGE",
+    "Message",
     "UnknownMessageKey",
     "current_language",
     "set_language",
     "t",
     "t_en",
+    "template",
     "tn",
 ]

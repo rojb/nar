@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 
 from nar.config.models import NarConfig, ProviderName
-from nar.errors import ProviderError
+from nar.errors import provider_error
 from nar.providers.base import LLMProvider
 from nar.providers.retry import OnRetry
 
@@ -40,12 +40,12 @@ def create_provider(config: NarConfig, on_retry: OnRetry | None = None) -> LLMPr
         from nar.providers.openai_compat import OllamaProvider
 
         return OllamaProvider(model, on_retry=on_retry)
-    raise ProviderError(f"unsupported provider: {name}", str(name))
+    raise provider_error("provider.unsupported", str(name), name=name)
 
 
 def _api_key(name: ProviderName) -> str:
     env = API_KEY_ENVS[name]
     key = os.environ.get(env, "").strip()
     if not key:
-        raise ProviderError(f"{env} is not set; export it to use the {name} provider", str(name))
+        raise provider_error("provider.key_not_set", str(name), env=env, name=name)
     return key

@@ -47,7 +47,7 @@ nar --resume             # continue the latest session of this folder
 nar --resume 20261103 "and now?"  # continue that session with one prompt and exit
 nar --trust-project-tools "use my tool"  # allow this project's tool files without asking
 nar --version
-nar --help
+nar --help               # usage and options, in the interface language
 nar --show-config        # print the effective configuration and where each value comes from
 ```
 
@@ -198,14 +198,55 @@ nar --language en "what does README.md say?"
 ## Interface language
 
 The same `language` setting (`es` by default, or `en`) is the language of `nar`'s own texts. It is
-fixed once per run, right after the configuration is loaded, so `--language en` changes it for one
-run. Texts live in one catalog, `src/nar/i18n/`, with the same keys in Spanish and English.
+fixed once per run, right after the configuration is loaded (and, for what is printed before
+that, from the arguments and the files; see below), so `--language en` changes it for one run.
+Texts live in one catalog, `src/nar/i18n/`, with the same keys in Spanish and English.
 
-> The catalog is being introduced in steps. The prompts (tool approval, trust for `.nar/tools/`,
-> saving an API key, the provider menu) and the tool, agent, session and MCP views are already in
-> it, and so are the slash commands, the banner, the runner messages and the errors and warnings
-> of the other modules; `--help` and the messages that appear before the configuration is loaded
-> are still English and move in the next change.
+### Before the configuration is loaded
+
+`--help`, `--version` and the errors for wrong arguments finish before the configuration is read,
+so `nar` works out the language first, in this order: the value after `--language` in the
+arguments (`--language en` or `--language=en`); else the `language` in
+`.nar/config.toml` or `~/.nar/config.toml` (the project file wins; a file that is broken or has a
+value that is not `es` or `en` is ignored here); else `es`. The configuration is then loaded
+as usual and its validated `language` takes over. A configuration error that stops the run is
+shown in the language found first.
+
+```text
+$ nar --help
+Uso: nar [OPTIONS] [PROMPT]
+...
+Opciones:
+  --approval [ask|auto-edit|yolo]
+                                  Nivel de autonomía para esta ejecución ...
+  --help                          Muestra este mensaje y sale.
+
+$ nar --language en --help
+Usage: nar [OPTIONS] [PROMPT]
+...
+Options:
+  --help                          Show this message and exit.
+
+$ nar --approval bogus
+Uso: nar [OPTIONS] [PROMPT]
+Prueba 'nar --help' para ver la ayuda.
+
+Error: Valor no válido para '--approval': 'bogus' no es una de las opciones: 'ask', 'auto-edit', 'yolo'.
+```
+
+The option descriptions come from the catalog, and so do the words that Click adds itself (`Uso:`,
+`Opciones:`, `Error:`, `Valor no válido para ...`, `No existe la opción ...`, `Falta el argumento`
+and the rest of `src/nar/i18n/click_words.py`). Option names, choices, `[OPTIONS]`, `[PROMPT]`,
+the value names such as `TEXT`, and the output of `--version` (`nar, version 0.1.0`) are the same in
+both languages.
+
+How the Click words are translated: Click calls `gettext` for every text, and `gettext` looks up
+`gettext.translation` each time. `nar` replaces that one function while the command runs
+(`click_words.installed()`), so each Click message id is answered from the catalog in the active
+language. An id that is not in the table comes back in Click's English. If a new Click version
+rewords an id, `tests/test_click_i18n.py` fails: it checks that Click still asks for every id in
+the table and that the English catalog texts are those ids. To translate one more Click text, add
+its id to `_MESSAGES` (or `_PLURALS`) in `click_words.py` and its key to both message modules.
 
 Prompt questions accept the same answers in both languages, whatever the interface language is:
 yes is `y`, `yes`, `s`, `si` or `sí`; no is `n` or `no`; always is `a`, `always` or `siempre`.
@@ -244,13 +285,13 @@ model, or when somebody else wrote it.
 | Translated (follows `language`) | Stays as written |
 |---|---|
 | Banner, notices, prompts, menus and the output of every slash command | Command names (`/help`, `exit`), flag names, configuration keys and values, file paths, provider and model names, the prompt `nar> ` |
-| Errors and warnings of `nar` itself: configuration, sessions and checkpoints, skills, `AGENTS.md`, MCP, hooks, project tools, compaction (`error:` stays `error:`; `warning:` becomes `aviso:`) | Text that a hook, an MCP server, a custom tool or a model provider wrote, and the error text of the operating system or a library, which is put inside our sentence as it is |
+| Errors and warnings of `nar` itself: configuration, sessions and checkpoints, skills, `AGENTS.md`, MCP, hooks, project tools, compaction, the words `nar` puts around a provider error (`deepseek rechazó la solicitud (400): ...`) and the boundary lines `error: fallo inesperado (...)`, `pista: define NAR_DEBUG=1 ...` and `cancelado` (`error:` stays `error:`; `warning:` becomes `aviso:`) | Text that a hook, an MCP server, a custom tool or a model provider wrote, and the error text of the operating system or a library, which is put inside our sentence as it is |
 | The source words of `--show-config` and `/config` (`default`, `command line`) | A file used as a source, for example `.nar/config.toml` |
 | The one-line summary of a tool result and the title of an approval preview (`Editar a.py (+1 -1)`) | Text that goes to the model: tool output and tool errors, the message of a preview that cannot run, the refusal of a `before_tool` hook, the rejected and unavailable approval results, the error of the `skill` tool, tool descriptions, and the system, subagent and compaction prompts |
 
 When one error is shown to the user and also returned to the model, it is built twice: the user
 sees `t(...)` and the model gets the English text of the same key with `t_en(...)`, as
-`SkillError` does through `model_message`. A retry notice works the same way: `RetryNotice.reason`
+`SkillError` and `ProviderError` do through `model_message` (a subagent that fails on a provider error hands the English one to the model). A retry notice works the same way: `RetryNotice.reason`
 stays English and `str(notice)` is translated.
 
 In tests, the language is `en` unless a test calls `set_language("es")`.

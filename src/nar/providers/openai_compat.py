@@ -11,7 +11,8 @@ from urllib.parse import urlsplit
 import httpx2
 import openai
 
-from nar.errors import ProviderError
+from nar.errors import ProviderError, provider_error
+from nar.i18n import Message as Text
 from nar.providers.base import (
     DEFAULT_MAX_TOKENS,
     LLMProvider,
@@ -225,7 +226,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # no /v1: the docs do not mention it
 DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
-DEEPSEEK_BALANCE_HINT = "deepseek account has insufficient balance; top up at platform.deepseek.com"
+DEEPSEEK_BALANCE_HINT = Text("provider.deepseek_balance")
 
 
 class DeepSeekProvider(OpenAICompatibleProvider):
@@ -262,7 +263,7 @@ class OllamaProvider(OpenAICompatibleProvider):
 
     def __init__(self, model: str, host: str | None = None, **kwargs: Any) -> None:
         self.host = ollama_host(host)
-        hint = f"cannot reach Ollama at {self.host}; is it running? (start it with 'ollama serve')"
+        hint = Text("provider.ollama_unreachable", {"host": self.host})
         super().__init__(
             model,
             base_url=f"{self.host}/v1",
@@ -277,8 +278,7 @@ class OllamaProvider(OpenAICompatibleProvider):
         return name in (self.model, wanted)
 
     def _missing_model(self, names: list[str]) -> ProviderError:
-        message = f"model '{self.model}' is not installed in Ollama; run 'ollama pull {self.model}'"
-        return ProviderError(message, self.name)
+        return provider_error("provider.ollama_missing_model", self.name, model=self.model)
 
 
 def ollama_host(value: str | None = None) -> str:
