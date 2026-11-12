@@ -279,3 +279,13 @@ def test_read_instructions_raises_when_the_file_became_invalid(tmp_path):
 
     with pytest.raises(SkillError):
         read_instructions(skill)
+
+
+def test_the_example_skill_is_valid():
+    examples = Path(__file__).resolve().parent.parent / "examples" / "skills"
+
+    skill = parse_skill(examples / "changelog", "project")
+
+    assert skill.name == "changelog"
+    assert (skill.folder / "template.md").is_file()
+    assert "template.md" in read_instructions(skill)
