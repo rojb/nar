@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from nar.config import DEFAULT_MODELS, ApprovalLevel, NarConfig, ProviderName, load_config
+from nar.config import (
+    DEFAULT_MODELS,
+    ApprovalLevel,
+    Language,
+    NarConfig,
+    ProviderName,
+    load_config,
+)
 from nar.config.models import HookEvent
 from nar.config.paths import project_config, user_config
 from nar.errors import ConfigError
@@ -36,6 +43,7 @@ def test_defaults_model():
     assert cfg.provider == "openrouter"
     assert cfg.model == "openrouter/auto"
     assert cfg.approval is ApprovalLevel.ASK
+    assert cfg.language is Language.ES
     assert cfg.mcp_servers == {}
 
 
@@ -92,6 +100,51 @@ def test_approval_default_and_valid_values(home, project):
     assert load_config(project).config.approval is ApprovalLevel.ASK
     write(project / ".nar" / "config.toml", 'approval = "auto-edit"\n')
     assert load_config(project).config.approval is ApprovalLevel.AUTO_EDIT
+
+
+def test_language_defaults_to_spanish(home, project):
+    loaded = load_config(project)
+    assert loaded.config.language is Language.ES
+    assert loaded.provenance["language"] == "default"
+
+
+def test_language_labels_name_the_language_in_english():
+    assert Language.ES.label == "Spanish"
+    assert Language.EN.label == "English"
+
+
+def test_language_from_the_user_file(home, project):
+    path = write(home / "config.toml", 'language = "en"\n')
+    loaded = load_config(project)
+    assert loaded.config.language is Language.EN
+    assert loaded.provenance["language"] == str(path)
+
+
+def test_language_project_file_beats_user_file(home, project):
+    write(home / "config.toml", 'language = "en"\n')
+    path = write(project / ".nar" / "config.toml", 'language = "es"\n')
+    loaded = load_config(project)
+    assert loaded.config.language is Language.ES
+    assert loaded.provenance["language"] == str(path)
+
+
+def test_language_override_beats_both_files(home, project):
+    write(home / "config.toml", 'language = "es"\n')
+    write(project / ".nar" / "config.toml", 'language = "es"\n')
+    loaded = load_config(project, overrides={"language": "en"})
+    assert loaded.config.language is Language.EN
+    assert loaded.provenance["language"] == "command line"
+
+
+def test_unsupported_language_names_setting_and_allowed(home, project):
+    path = write(project / ".nar" / "config.toml", 'language = "fr"\n')
+    with pytest.raises(ConfigError) as info:
+        load_config(project)
+    message = info.value.message
+    assert "language" in message
+    assert "es, en" in message
+    assert str(path) in message
+    assert "\n" not in message
 
 
 def test_malformed_toml_names_file_and_line(home, project):
@@ -175,6 +228,7 @@ def test_describe_shows_sources(home, project):
     assert "model = b  (.nar/config.toml)" in lines
     assert "provider = openrouter  (default)" in lines
     assert "approval = ask  (default)" in lines
+    assert "language = es  (default)" in lines
     assert "mcp_servers = {}  (default)" in lines
 
 

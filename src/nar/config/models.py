@@ -14,6 +14,18 @@ class ApprovalLevel(StrEnum):
     YOLO = "yolo"
 
 
+class Language(StrEnum):
+    """The language the model replies in (RRG-97)."""
+
+    ES = "es"
+    EN = "en"
+
+    @property
+    def label(self) -> str:
+        """The language named in English, as the prompts name it."""
+        return {Language.ES: "Spanish", Language.EN: "English"}[self]
+
+
 class HookEvent(StrEnum):
     """The moments a project may run one of its own commands (RRG-72)."""
 
@@ -101,6 +113,8 @@ class NarConfig(BaseModel):
     provider: ProviderName = ProviderName.OPENROUTER
     model: str | None = None
     approval: ApprovalLevel = ApprovalLevel.ASK
+    # The language the model replies in (RRG-97).
+    language: Language = Language.ES
     # Model calls the agent may make for one request (RRG-63).
     max_turns: int = Field(default=20, ge=1)
     # Model calls a subagent may make for one task (RRG-73).
