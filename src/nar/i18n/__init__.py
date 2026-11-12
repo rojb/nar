@@ -49,6 +49,19 @@ def t(key: str, **values: object) -> str:
     return text.format(**values)
 
 
+def t_en(key: str, **values: object) -> str:
+    """The English text for ``key``, whatever the active language is.
+
+    For an error that the user sees translated (``t``) and that also goes to the model, which
+    always gets English.
+    """
+    try:
+        text = _CATALOGS["en"][key]
+    except KeyError:
+        raise UnknownMessageKey(key, "en") from None
+    return text.format(**values)
+
+
 def tn(key: str, count: int, **values: object) -> str:
     """Like ``t`` for a text that depends on a count: uses ``<key>.one`` when ``count`` is 1.
 
@@ -65,5 +78,6 @@ __all__ = [
     "current_language",
     "set_language",
     "t",
+    "t_en",
     "tn",
 ]

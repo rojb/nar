@@ -7,6 +7,8 @@ from pathlib import Path
 
 import click
 
+from nar.i18n import t
+
 AGENTS_FILENAME = "AGENTS.md"
 MAX_BYTES = 64 * 1024
 
@@ -47,18 +49,16 @@ def load_project_instructions(cwd: Path) -> ProjectInstructions | None:
         with path.open("rb") as handle:
             data = handle.read(MAX_BYTES + 1)
     except OSError as exc:
-        _warn(
-            f"cannot read {path} ({exc.strerror or exc}); continuing without project instructions"
-        )
+        _warn("instructions.cannot_read", path=path, reason=exc.strerror or exc)
         return None
 
     truncated = len(data) > MAX_BYTES
     content = _decode(data[:MAX_BYTES] if truncated else data, allow_partial_tail=truncated)
     if content is None:
-        _warn(f"{path} is not valid UTF-8; continuing without project instructions")
+        _warn("instructions.not_utf8", path=path)
         return None
     if truncated:
-        _warn(f"{path} is larger than {MAX_BYTES // 1024} KB; only the first 64 KB are used")
+        _warn("instructions.too_large", path=path, kb=MAX_BYTES // 1024)
     return ProjectInstructions(path=path, content=content, truncated=truncated)
 
 
@@ -72,5 +72,5 @@ def _decode(data: bytes, allow_partial_tail: bool) -> str | None:
     return None
 
 
-def _warn(message: str) -> None:
-    click.secho(f"warning: {message}", fg="yellow", err=True)
+def _warn(key: str, **values: object) -> None:
+    click.secho(t(key, prefix=t("warning.prefix"), **values), fg="yellow", err=True)

@@ -12,6 +12,7 @@ import yaml
 
 from nar.config.paths import nar_home
 from nar.errors import NarError
+from nar.i18n import t, t_en
 
 SKILL_FILENAME = "SKILL.md"
 MAX_NAME_LENGTH = 64
@@ -35,12 +36,17 @@ class Skill:
 
 
 class SkillError(NarError):
-    """A ``SKILL.md`` that cannot be used; carries the file and the reason."""
+    """A ``SKILL.md`` that cannot be used; carries the file and the reason.
 
-    def __init__(self, file: Path, reason: str) -> None:
-        super().__init__(f"{file}: {reason}")
+    ``message`` is for the user, in the interface language. ``model_message`` is the same
+    text in English: the ``skill`` tool returns it to the model.
+    """
+
+    def __init__(self, file: Path, reason_key: str, **values: object) -> None:
+        super().__init__(f"{file}: {t(reason_key, **values)}")
         self.file = file
-        self.reason = reason
+        self.reason = t(reason_key, **values)
+        self.model_message = f"{file}: {t_en(reason_key, **values)}"
 
 
 def user_skills_dir() -> Path:
@@ -58,18 +64,17 @@ def parse_skill(folder: Path, origin: Origin) -> Skill:
     name = _text_field(file, meta, "name")
     description = _text_field(file, meta, "description")
     if len(name) > MAX_NAME_LENGTH or not NAME_PATTERN.fullmatch(name):
-        raise SkillError(
-            file,
-            f"invalid name {name!r}: use only lowercase letters, digits and hyphens "
-            f"(at most {MAX_NAME_LENGTH} characters)",
-        )
+        raise SkillError(file, "skill.error.invalid_name", name=repr(name), max=MAX_NAME_LENGTH)
     if name != folder.name:
-        raise SkillError(file, f"the name {name!r} does not match the folder {folder.name!r}")
+        raise SkillError(
+            file, "skill.error.name_mismatch", name=repr(name), folder=repr(folder.name)
+        )
     if len(description) > MAX_DESCRIPTION_LENGTH:
         raise SkillError(
             file,
-            f"the description is too long ({len(description)} characters, "
-            f"at most {MAX_DESCRIPTION_LENGTH})",
+            "skill.error.description_long",
+            count=len(description),
+            max=MAX_DESCRIPTION_LENGTH,
         )
     return Skill(name=name, description=description, folder=folder, origin=origin)
 
@@ -108,9 +113,13 @@ def _scan(directory: Path, origin: Origin, warn: Callable[[str], None]) -> list[
                 continue
             skills.append(parse_skill(folder, origin))
         except SkillError as exc:
-            warn(f"skipping skill: {exc}")
+            warn(t("skill.skipped", prefix=t("warning.prefix"), error=exc.message))
         except OSError as exc:
-            warn(f"skipping skill: {folder / SKILL_FILENAME}: {exc.strerror or exc}")
+            path = folder / SKILL_FILENAME
+            reason = exc.strerror or exc
+            warn(
+                t("skill.skipped_unreadable", prefix=t("warning.prefix"), path=path, reason=reason)
+            )
     return skills
 
 
@@ -118,32 +127,32 @@ def _read(file: Path) -> tuple[dict[str, object], str]:
     try:
         text = file.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        raise SkillError(file, "the file is not valid UTF-8") from None
+        raise SkillError(file, "skill.error.not_utf8") from None
     except OSError as exc:
-        raise SkillError(file, f"cannot read the file ({exc.strerror or exc})") from None
+        raise SkillError(file, "skill.error.cannot_read", reason=exc.strerror or exc) from None
     return _split(file, text)
 
 
 def _split(file: Path, text: str) -> tuple[dict[str, object], str]:
     lines = text.removeprefix("\ufeff").splitlines()
     if not lines or lines[0].strip() != DELIMITER:
-        raise SkillError(file, f"the frontmatter is missing (the file must start with {DELIMITER})")
+        raise SkillError(file, "skill.error.frontmatter_missing", delimiter=DELIMITER)
     end = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == DELIMITER), None)
     if end is None:
-        raise SkillError(file, f"the frontmatter is not closed (no closing {DELIMITER} line)")
+        raise SkillError(file, "skill.error.frontmatter_unclosed", delimiter=DELIMITER)
     try:
         meta = yaml.safe_load("\n".join(lines[1:end]))
     except yaml.YAMLError:
-        raise SkillError(file, "the frontmatter is not valid YAML") from None
+        raise SkillError(file, "skill.error.frontmatter_yaml") from None
     if not isinstance(meta, dict):
-        raise SkillError(file, "the frontmatter must be a mapping of keys to values")
+        raise SkillError(file, "skill.error.frontmatter_mapping")
     return meta, "\n".join(lines[end + 1 :])
 
 
 def _text_field(file: Path, meta: dict[str, object], key: str) -> str:
     value = meta.get(key)
     if value is None or (isinstance(value, str) and not value.strip()):
-        raise SkillError(file, f"the frontmatter has no {key}")
+        raise SkillError(file, "skill.error.no_field", field=key)
     if not isinstance(value, str):
-        raise SkillError(file, f"the {key} must be a string")
+        raise SkillError(file, "skill.error.not_string", field=key)
     return value.strip()
