@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 from rich.text import Text
 
-from nar.i18n import t
+from nar.i18n import t, tn
 from nar.mcp.manager import McpManager
 from nar.ui.mcp_view import render_mcp_status
 
@@ -92,7 +92,7 @@ def dispatch(line: str, context: SlashContext) -> bool:
     if entry is None:
         available = ", ".join(f"/{command}" for command in _COMMANDS)
         context.err.print(
-            Text(f"error: /{name} is not a command; available: {available}", "red"),
+            Text(t("cmd.not_a_command", name=name, available=available), "red"),
             highlight=False,
             soft_wrap=True,
         )
@@ -109,7 +109,7 @@ def _mcp_command(context: SlashContext, argument: str) -> None:
 def _compact_command(context: SlashContext, argument: str) -> None:
     if argument:
         context.err.print(
-            Text("error: /compact does not take arguments", "red"),
+            Text(t("cmd.compact.no_arguments"), "red"),
             highlight=False,
             soft_wrap=True,
         )
@@ -146,7 +146,7 @@ def _resume_command(context: SlashContext, argument: str) -> None:
         view.error(exc.message)
         return
     if session is None:
-        view.error(f"there is no other saved session in {cwd}")
+        view.error(t("cmd.resume.none_other", cwd=cwd))
         return
     recorder.save()
     continue_session(context.agent, view, recorder, session, cwd)
@@ -159,19 +159,17 @@ def _checkpoint_command(context: SlashContext, argument: str) -> None:
 
     view = context.view
     if not context.agent.context.messages:
-        view.error("there is nothing to save yet")
+        view.error(t("cmd.checkpoint.nothing"))
         return
     try:
         checkpoint = context.recorder.checkpoint(argument)
     except NarError as exc:
         view.error(exc.message)
     except OSError as exc:
-        view.error(f"cannot save the checkpoint: {exc.strerror or exc}")
+        view.error(t("cmd.checkpoint.cannot_save", reason=exc.strerror or exc))
     else:
-        label = f"checkpoint {checkpoint.id} saved"
-        if checkpoint.name:
-            label += f": {checkpoint.name}"
-        view.note(f"{label} ({len(checkpoint.messages)} messages)")
+        key = "cmd.checkpoint.saved_named" if checkpoint.name else "cmd.checkpoint.saved"
+        view.note(tn(key, len(checkpoint.messages), id=checkpoint.id, name=checkpoint.name))
 
 
 def _checkpoints_command(context: SlashContext, argument: str) -> None:
@@ -193,17 +191,14 @@ def _restore_command(context: SlashContext, argument: str) -> None:
 
     view = context.view
     if not argument:
-        view.error("use /restore <id or name>; /checkpoints lists them")
+        view.error(t("cmd.restore.usage"))
         return
     try:
         checkpoint = context.recorder.restore(argument)
     except NarError as exc:
         view.error(exc.message)
         return
-    view.note(
-        f"restored checkpoint {checkpoint.id}: the conversation now has "
-        f"{len(checkpoint.messages)} messages; files changed by tools were not restored"
-    )
+    view.note(tn("cmd.restore.done", len(checkpoint.messages), id=checkpoint.id))
     show_context_usage(context.agent, view)
 
 

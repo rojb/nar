@@ -14,6 +14,7 @@ from nar.cli.slash import PendingSkill, SlashContext, register_command
 from nar.config.loader import DEFAULT_SOURCE
 from nar.config.models import ApprovalLevel
 from nar.errors import NarError
+from nar.i18n import t, tn
 from nar.skills import Skill, SkillError, read_instructions, user_skills_dir
 
 
@@ -34,11 +35,11 @@ def _clear(context: SlashContext, argument: str) -> None:
 
     agent = context.agent
     if agent is None:
-        _line(context, "error: there is no conversation to clear")
+        _line(context, t("cmd.clear.no_conversation"))
         return
     clear_conversation(agent, context.recorder)
     context.pending_skill = None
-    _line(context, "cleared: the earlier messages are gone; provider and approval stay")
+    _line(context, t("cmd.clear.done"))
 
 
 def _exit(context: SlashContext, argument: str) -> None:
@@ -48,7 +49,7 @@ def _exit(context: SlashContext, argument: str) -> None:
 def _model_source(context: SlashContext, key: str) -> str:
     """Where the provider or model in use came from, in the words of ``/config``."""
     if context.agent is not None and context.agent.provider_switched:
-        return "set in this session with /model"
+        return t("cmd.model.source_session")
     loaded = context.loaded
     if loaded is None:
         return DEFAULT_SOURCE
@@ -60,15 +61,20 @@ def _model(context: SlashContext, argument: str) -> None:
 
     agent, view = context.agent, context.view
     if agent is None or view is None:
-        _line(context, "error: there is no agent to switch")
+        _line(context, t("cmd.model.no_agent"))
         return
     spec = argument.strip()
     if not spec:
         provider, model = agent.provider.name, agent.provider.model
         _line(
             context,
-            f"provider {provider} ({_model_source(context, 'provider')}), "
-            f"model {model} ({_model_source(context, 'model')})",
+            t(
+                "cmd.model.current",
+                provider=provider,
+                provider_source=_model_source(context, "provider"),
+                model=model,
+                model_source=_model_source(context, "model"),
+            ),
         )
         return
     current = agent.provider
@@ -77,7 +83,7 @@ def _model(context: SlashContext, argument: str) -> None:
     except NarError as exc:
         _line(context, f"error: {exc.message}")
     except KeyboardInterrupt:  # during the check: the session goes on
-        _line(context, f"model switch cancelled; still using {current.name} · {current.model}")
+        _line(context, t("cmd.model.cancelled", provider=current.name, model=current.model))
 
 
 def _models(context: SlashContext, argument: str) -> None:
@@ -85,7 +91,7 @@ def _models(context: SlashContext, argument: str) -> None:
 
     agent, view = context.agent, context.view
     if agent is None or view is None:
-        _line(context, "error: there is no agent to ask")
+        _line(context, t("cmd.models.no_agent"))
         return
     words = argument.split(None, 1)
     spec = words[0] if words else ""
@@ -96,26 +102,29 @@ def _models(context: SlashContext, argument: str) -> None:
         _line(context, f"error: {exc.message}")
         return
     except KeyboardInterrupt:  # the session goes on
-        _line(context, "listing cancelled")
+        _line(context, t("cmd.models.cancelled"))
         return
     names = sorted(names)
     shown = [name for name in names if text.lower() in name.lower()]
     if text and not shown:
-        _line(context, f"{provider}: no model matches '{text}' ({len(names)} models)")
+        _line(context, tn("cmd.models.no_match", len(names), provider=provider, text=text))
         return
     if text:
-        _line(context, f"{provider}: {len(shown)} of {len(names)} models match '{text}'")
+        _line(
+            context,
+            tn("cmd.models.match", len(shown), provider=provider, total=len(names), text=text),
+        )
     else:
-        _line(context, f"{provider}: {len(names)} models")
+        _line(context, tn("cmd.models.count", len(names), provider=provider))
     in_use = agent.provider.model if provider == agent.provider.name else None
     for name in shown:
-        _line(context, f"  {name}  ← in use" if name == in_use else f"  {name}")
+        _line(context, f"  {name}  ← {t('cmd.models.in_use')}" if name == in_use else f"  {name}")
 
 
 def _approval(context: SlashContext, argument: str) -> None:
     gate = context.agent.gate if context.agent is not None else None
     if not isinstance(gate, ApprovalGate):
-        _line(context, "error: this session has no approval gate")
+        _line(context, t("cmd.approval.no_gate"))
         return
     spec = argument.strip()
     if not spec:
@@ -125,7 +134,7 @@ def _approval(context: SlashContext, argument: str) -> None:
         level = ApprovalLevel(spec)
     except ValueError:
         names = ", ".join(option.value for option in ApprovalLevel)
-        _line(context, f"error: unknown approval level '{spec}'; use {names}")
+        _line(context, t("cmd.approval.unknown", spec=spec, names=names))
         return
     gate.level = level
     _line(context, f"approval {level.value}")
@@ -134,7 +143,7 @@ def _approval(context: SlashContext, argument: str) -> None:
 def _config(context: SlashContext, argument: str) -> None:
     loaded = context.loaded
     if loaded is None:
-        _line(context, "error: the configuration was not loaded for this session")
+        _line(context, t("cmd.config.not_loaded"))
         return
     cwd = context.cwd or Path.cwd()
     for line in loaded.describe(cwd):
@@ -144,18 +153,20 @@ def _config(context: SlashContext, argument: str) -> None:
 def _tools(context: SlashContext, argument: str) -> None:
     agent = context.agent
     if agent is None:
-        _line(context, "error: there is no agent")
+        _line(context, t("cmd.no_agent"))
         return
     for definition in agent.registry.definitions():
         text = (definition.get("description") or "").strip().splitlines()
-        _line(context, f"{definition['name']}: {text[0] if text else '(no description)'}")
+        _line(
+            context, f"{definition['name']}: {text[0] if text else t('cmd.tools.no_description')}"
+        )
 
 
 def _tokens(context: SlashContext, argument: str) -> None:
     from nar.cli.runner import show_context_usage
 
     if context.agent is None or context.view is None:
-        _line(context, "error: there is no agent")
+        _line(context, t("cmd.no_agent"))
         return
     show_context_usage(context.agent, context.view)
 
@@ -169,7 +180,7 @@ def _skills(context: SlashContext, argument: str) -> None:
     if not skills:
         _line(
             context,
-            f"no skills found; looked in .nar/skills/ and {user_skills_dir()}",
+            t("cmd.skills.none_found", path=user_skills_dir()),
         )
         return
     for skill in skills:
@@ -183,20 +194,20 @@ def _skill(context: SlashContext, argument: str) -> None:
     request = words[1].strip() if len(words) == 2 else ""
     chosen = next((skill for skill in skills if skill.name == name), None)
     if chosen is None:
-        listing = ", ".join(skill.name for skill in skills) or "none"
+        listing = ", ".join(skill.name for skill in skills) or t("cmd.skill.none_word")
         if name:
-            _line(context, f"error: there is no skill named '{name}'; available skills: {listing}")
+            _line(context, t("cmd.skill.unknown", name=name, listing=listing))
         else:
-            _line(context, f"error: use /skill <name> [request]; available skills: {listing}")
+            _line(context, t("cmd.skill.usage", listing=listing))
         return
     try:
         instructions = read_instructions(chosen)
     except SkillError as exc:
-        _line(context, f"error: cannot load the skill '{chosen.name}': {exc.message}")
+        _line(context, t("cmd.skill.cannot_load", name=chosen.name, reason=exc.message))
         return
     context.pending_skill = PendingSkill(chosen.name, chosen.folder.resolve(), instructions)
     context.queued_request = request or None
-    _line(context, f"Skill {chosen.name} will be used with the next request.")
+    _line(context, t("cmd.skill.chosen", name=chosen.name))
 
 
 register_command("help", _help, "command.help.summary")
