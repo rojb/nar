@@ -19,6 +19,10 @@ def test_default_language_is_spanish_before_set_language(monkeypatch):
     )
 
 
+def test_conftest_pins_english_for_tests():
+    assert current_language() == "en"
+
+
 def test_t_formats_placeholders_in_the_active_language():
     set_language("en")
     assert t("repl.banner", provider="anthropic", model="claude") == (
