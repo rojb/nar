@@ -25,6 +25,10 @@ class SessionFileError(NarError):
     """A session is missing, ambiguous, invalid or cannot be read."""
 
 
+class SessionNotFound(SessionFileError):
+    """No session has the id that was asked for, or the id is not a valid one."""
+
+
 def sessions_dir() -> Path:
     """Evaluated at each call so that ``NAR_HOME`` set by tests is honored."""
     return paths.nar_home() / "sessions"
@@ -70,7 +74,7 @@ class SessionStore:
 
     def path(self, session_id: str) -> Path:
         if not _ID_PATTERN.match(session_id):
-            raise SessionFileError(f"invalid session id '{session_id}'")
+            raise SessionNotFound(f"invalid session id '{session_id}'")
         return self.directory / f"{session_id}.json"
 
     def save(self, session: Session) -> None:
@@ -81,7 +85,7 @@ class SessionStore:
     def load(self, session_id: str) -> Session:
         path = self.path(session_id)
         if not path.exists():
-            raise SessionFileError(f"no session '{session_id}'")
+            raise SessionNotFound(f"no session '{session_id}'")
         return _read(path)
 
     def delete(self, session_id: str) -> None:
@@ -107,7 +111,7 @@ class SessionStore:
             return self.load(prefix)
         matches = sorted(p.stem for p in self.directory.glob(f"{prefix}*.json"))
         if not matches:
-            raise SessionFileError(f"no session '{prefix}'")
+            raise SessionNotFound(f"no session '{prefix}'")
         if len(matches) > 1:
             raise SessionFileError(f"'{prefix}' matches several sessions: {', '.join(matches)}")
         return self.load(matches[0])

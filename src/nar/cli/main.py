@@ -15,7 +15,7 @@ from nar.cli import repl
 from nar.config import ApprovalLevel, Language, NarConfig, ProviderName, load_config
 from nar.context import ProjectInstructions, load_project_instructions
 from nar.errors import NarError
-from nar.i18n import set_language
+from nar.i18n import set_language, t, tn
 
 if TYPE_CHECKING:
     from nar.session import Session
@@ -40,28 +40,24 @@ def run_single(
     with connect_mcp(config, agent, view):
         recorder = open_session(agent, view, Path.cwd(), resumed)
         if resumed is not None:
-            view.note(f"resumed session {resumed.id} ({len(resumed.messages)} messages)")
+            view.note(tn("session.resumed", len(resumed.messages), id=resumed.id))
         outcome = run_request(agent, view, prompt, recorder)
         return 1 if outcome in (Outcome.TURN_LIMIT, Outcome.LOOP) else 0
 
 
 def _find_session(resume: str, cwd: Path) -> Session:
     """The session ``--resume`` asks for; failing here needs no provider key or MCP server."""
-    from nar.session import SessionFileError, SessionStore, sessions_dir
+    from nar.session import SessionFileError, SessionNotFound, SessionStore, sessions_dir
 
     store = SessionStore(sessions_dir())
     if resume:
         try:
             return store.find(resume)
-        except SessionFileError as exc:
-            if exc.message.startswith(("no session", "invalid session id")):
-                exc = SessionFileError(
-                    f'{exc.message}; to give a prompt too, use nar --resume <id> "prompt"'
-                )
-            raise exc from None
+        except SessionNotFound as exc:
+            raise SessionFileError(t("session.resume_hint", message=exc.message)) from None
     session = store.latest(cwd)
     if session is None:
-        raise SessionFileError(f"no saved session in {cwd}; use nar --resume <id>")
+        raise SessionFileError(t("session.none_saved_in", cwd=cwd))
     return session
 
 

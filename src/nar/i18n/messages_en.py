@@ -153,4 +153,8 @@ MESSAGES: dict[str, str] = {
     "key.saved": "saved {env} for your Windows user; new terminals will see it",
     "approval.summary.rejected": "rejected by user",
     "approval.summary.unavailable": "needs approval (cannot ask)",
+    "session.resume_hint": '{message}; to give a prompt too, use nar --resume <id> "prompt"',
+    "session.none_saved_in": "no saved session in {cwd}; use nar --resume <id>",
+    "session.resumed.one": "resumed session {id} ({count} message)",
+    "session.resumed.other": "resumed session {id} ({count} messages)",
 }
