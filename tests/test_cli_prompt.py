@@ -60,3 +60,24 @@ def test_a_terminal_uses_the_completing_prompt(monkeypatch):
     monkeypatch.setattr("prompt_toolkit.PromptSession", FakeSession)
     assert read_line("nar> ") == "from prompt_toolkit"
     assert seen["completer"] is not None
+
+
+@pytest.mark.parametrize("line", ["\x1a", "  \x1a ", "\x1a\r"])
+def test_a_line_with_only_ctrl_z_is_end_of_input_without_a_terminal(monkeypatch, line):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr("builtins.input", lambda prompt: line)
+    with pytest.raises(EOFError):
+        read_line("nar> ")
+
+
+def test_a_line_with_only_ctrl_z_is_end_of_input_at_a_terminal(monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("nar.cli.prompt._terminal_line", lambda prompt: "\x1a")
+    with pytest.raises(EOFError):
+        read_line("nar> ")
+
+
+def test_ctrl_z_inside_a_request_is_kept(monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr("builtins.input", lambda prompt: "a\x1ab")
+    assert read_line("nar> ") == "a\x1ab"

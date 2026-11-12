@@ -196,6 +196,13 @@ def test_repl_eof_exits_zero(runner, fake_provider):
     assert "Traceback" not in result.output
 
 
+def test_repl_ctrl_z_then_enter_exits_zero_and_sends_nothing(runner, fake_provider):
+    result = runner.invoke(main, [], input="\x1a\nnever read\n")
+    assert result.exit_code == 0
+    assert "Traceback" not in result.output
+    assert fake_provider.requests == []
+
+
 def test_repl_ctrl_c_exits_zero(runner, monkeypatch, fake_provider):
     repl_module = importlib.import_module("nar.cli.repl")
 

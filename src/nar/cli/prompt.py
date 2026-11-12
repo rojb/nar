@@ -27,11 +27,18 @@ def completions(line: str) -> list[tuple[str, str]]:
     ]
 
 
+CTRL_Z = chr(26)  # Windows' end-of-file key; the console hands it over as a line
+
+
 def read_line(prompt: str) -> str:
-    """One line of input, with completion when standard input is a terminal."""
-    if not sys.stdin.isatty():
-        return input(prompt)
-    return _terminal_line(prompt)
+    """One line of input, with completion when standard input is a terminal.
+
+    Raises ``EOFError`` at end of input, which includes Ctrl+Z then Enter on Windows.
+    """
+    line = input(prompt) if not sys.stdin.isatty() else _terminal_line(prompt)
+    if CTRL_Z in line and not line.replace(CTRL_Z, "").strip():
+        raise EOFError
+    return line
 
 
 def _terminal_line(prompt: str) -> str:
