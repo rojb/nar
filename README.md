@@ -183,10 +183,40 @@ nar --language en "what does README.md say?"
   unchanged.
 - The rule is part of the system prompt, which is built once, so the language does not change
   during a session. Start `nar` again with another `--language` to change it.
-- Only the model's replies change. `nar`'s own messages (errors, warnings, `/help`) stay in
-  English for now.
+- This section is about the model's replies. The language of `nar`'s own messages is set by the
+  same `language` setting; see "Interface language".
 - It is an instruction to the model, so an `AGENTS.md` that asks for something else, such as
   commit messages in English, still applies.
+
+## Interface language
+
+The same `language` setting (`es` by default, or `en`) is the language of `nar`'s own texts. It is
+fixed once per run, right after the configuration is loaded, so `--language en` changes it for one
+run. Texts live in one catalog, `src/nar/i18n/`, with the same keys in Spanish and English.
+
+> The catalog is being introduced in steps. Right now it holds only a few texts, and most of
+> `nar`'s messages are still English; the next changes move the prompts, commands, errors and
+> `--help` into it.
+
+Prompt questions accept the same answers in both languages, whatever the interface language is:
+yes is `y`, `yes`, `s`, `si` or `sí`; no is `n` or `no`; always is `a`, `always` or `siempre`.
+Letter case and accents do not matter. The code for this is `nar.i18n.answers.parse_answer`.
+
+To add a text:
+
+1. Add the key to both `src/nar/i18n/messages_es.py` and `src/nar/i18n/messages_en.py`, with the
+   same placeholder names (`{count}` in one, `{count}` in the other). Use a whole sentence per
+   key, and two keys when the plural changes the sentence (`session.invalid.one`,
+   `session.invalid.other`).
+2. Show it with `t("your.key", count=2)` (`from nar.i18n import t`) at the moment it is printed,
+   not in a module-level constant: the language is not known when the module is imported.
+3. Run `pytest tests/test_i18n.py`: it fails when a key is missing in one language or a
+   placeholder differs.
+
+Text that goes to the model (tool output and errors, hook refusals, system prompts) stays
+English and does not use `t(...)`.
+
+In tests, the language is `en` unless a test calls `set_language("es")`.
 
 ## Approvals
 

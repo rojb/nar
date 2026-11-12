@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from mcp_support import FIXTURE, read_pid, wait_until_gone
-from nar import __version__
+from nar import __version__, i18n
 from nar.cli import main
 from nar.errors import NarError, ProviderError
 from nar.providers import LLMResponse, Message, ResponseDone, StopReason, TextDelta, ToolCall
@@ -1038,6 +1038,25 @@ def test_invalid_language_in_a_file_exits_one_with_one_line(runner, workdir):
     assert "language" in result.stderr
     assert "es, en" in result.stderr
     assert len(result.stderr.strip().splitlines()) == 1
+
+
+def test_active_interface_language_follows_the_language_option(runner, workdir):
+    runner.invoke(main, ["--language", "es", "--show-config"])
+    assert i18n.current_language() == "es"
+
+    runner.invoke(main, ["--language", "en", "--show-config"])
+    assert i18n.current_language() == "en"
+
+
+def test_active_interface_language_follows_the_file_and_defaults_to_spanish(runner, workdir):
+    runner.invoke(main, ["--show-config"])
+    assert i18n.current_language() == "es"
+
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
+    i18n.set_language("es")
+    runner.invoke(main, ["--show-config"])
+    assert i18n.current_language() == "en"
 
 
 def test_help_lists_the_language_option(runner):
