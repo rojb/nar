@@ -203,8 +203,9 @@ run. Texts live in one catalog, `src/nar/i18n/`, with the same keys in Spanish a
 
 > The catalog is being introduced in steps. The prompts (tool approval, trust for `.nar/tools/`,
 > saving an API key, the provider menu) and the tool, agent, session and MCP views are already in
-> it, and so are the slash commands, the banner and the runner messages; the errors and
-> warnings of the other modules and `--help` are still English and move in the next changes.
+> it, and so are the slash commands, the banner, the runner messages and the errors and warnings
+> of the other modules; `--help` and the messages that appear before the configuration is loaded
+> are still English and move in the next change.
 
 Prompt questions accept the same answers in both languages, whatever the interface language is:
 yes is `y`, `yes`, `s`, `si` or `sí`; no is `n` or `no`; always is `a`, `always` or `siempre`.
@@ -234,6 +235,23 @@ To add a text:
 
 Text that goes to the model (tool output and errors, hook refusals, system prompts) stays
 English and does not use `t(...)`.
+
+### What is translated and what is not
+
+A text is translated when only the user reads it. A text stays English when it can reach the
+model, or when somebody else wrote it.
+
+| Translated (follows `language`) | Stays as written |
+|---|---|
+| Banner, notices, prompts, menus and the output of every slash command | Command names (`/help`, `exit`), flag names, configuration keys and values, file paths, provider and model names, the prompt `nar> ` |
+| Errors and warnings of `nar` itself: configuration, sessions and checkpoints, skills, `AGENTS.md`, MCP, hooks, project tools, compaction (`error:` stays `error:`; `warning:` becomes `aviso:`) | Text that a hook, an MCP server, a custom tool or a model provider wrote, and the error text of the operating system or a library, which is put inside our sentence as it is |
+| The source words of `--show-config` and `/config` (`default`, `command line`) | A file used as a source, for example `.nar/config.toml` |
+| The one-line summary of a tool result and the title of an approval preview (`Editar a.py (+1 -1)`) | Text that goes to the model: tool output and tool errors, the message of a preview that cannot run, the refusal of a `before_tool` hook, the rejected and unavailable approval results, the error of the `skill` tool, tool descriptions, and the system, subagent and compaction prompts |
+
+When one error is shown to the user and also returned to the model, it is built twice: the user
+sees `t(...)` and the model gets the English text of the same key with `t_en(...)`, as
+`SkillError` does through `model_message`. A retry notice works the same way: `RetryNotice.reason`
+stays English and `str(notice)` is translated.
 
 In tests, the language is `en` unless a test calls `set_language("es")`.
 
