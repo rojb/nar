@@ -14,6 +14,7 @@ from typing import Any
 
 from nar.config import paths
 from nar.errors import NarError
+from nar.i18n import t
 from nar.providers.messages import Message, ToolCall
 
 FORMAT_VERSION = 1
@@ -23,6 +24,10 @@ _ROLES = ("user", "assistant", "tool")
 
 class SessionFileError(NarError):
     """A session is missing, ambiguous, invalid or cannot be read."""
+
+
+class SessionNotFound(SessionFileError):
+    """No session has the id that was asked for, or the id is not a valid one."""
 
 
 def sessions_dir() -> Path:
@@ -70,7 +75,7 @@ class SessionStore:
 
     def path(self, session_id: str) -> Path:
         if not _ID_PATTERN.match(session_id):
-            raise SessionFileError(f"invalid session id '{session_id}'")
+            raise SessionNotFound(t("session.error.invalid_id", id=session_id))
         return self.directory / f"{session_id}.json"
 
     def save(self, session: Session) -> None:
@@ -81,7 +86,7 @@ class SessionStore:
     def load(self, session_id: str) -> Session:
         path = self.path(session_id)
         if not path.exists():
-            raise SessionFileError(f"no session '{session_id}'")
+            raise SessionNotFound(t("session.error.not_found", id=session_id))
         return _read(path)
 
     def delete(self, session_id: str) -> None:
@@ -107,9 +112,10 @@ class SessionStore:
             return self.load(prefix)
         matches = sorted(p.stem for p in self.directory.glob(f"{prefix}*.json"))
         if not matches:
-            raise SessionFileError(f"no session '{prefix}'")
+            raise SessionNotFound(t("session.error.not_found", id=prefix))
         if len(matches) > 1:
-            raise SessionFileError(f"'{prefix}' matches several sessions: {', '.join(matches)}")
+            matching = ", ".join(matches)
+            raise SessionFileError(t("session.error.ambiguous", prefix=prefix, matches=matching))
         return self.load(matches[0])
 
     def latest(self, cwd: Path, exclude: str | None = None) -> Session | None:
@@ -161,11 +167,10 @@ def message_to_json(message: Message) -> dict[str, Any]:
 
 
 def _read(path: Path) -> Session:
-    problem = f"cannot read the session file {path}"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SessionFileError(f"{problem}: {exc}") from exc
+        raise SessionFileError(t("session.error.cannot_read", path=path, reason=exc)) from exc
     try:
         if data["version"] != FORMAT_VERSION:
             raise ValueError(f"unknown version {data['version']}")
@@ -173,7 +178,7 @@ def _read(path: Path) -> Session:
         values = {name: _text(data[name]) for name in text_fields}
         messages = tuple(message_from_json(item) for item in data["messages"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise SessionFileError(f"{problem}: not a valid session ({exc})") from exc
+        raise SessionFileError(t("session.error.not_valid", path=path, reason=exc)) from exc
     return Session(messages=messages, **values)
 
 

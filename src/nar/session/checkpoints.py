@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from nar.i18n import t
 from nar.providers.messages import Message
 from nar.session.store import (
     SessionFileError,
@@ -45,17 +46,18 @@ class CheckpointStore:
         path = self.path(session_id)
         if not path.exists():
             return []
-        problem = f"cannot read the checkpoint file {path}"
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise SessionFileError(f"{problem}: {exc}") from exc
+            raise SessionFileError(
+                t("checkpoint.error.cannot_read", path=path, reason=exc)
+            ) from exc
         try:
             if data["version"] != FORMAT_VERSION:
                 raise ValueError(f"unknown version {data['version']}")
             return [_checkpoint_from_json(item) for item in data["checkpoints"]]
         except (KeyError, TypeError, ValueError) as exc:
-            raise SessionFileError(f"{problem}: not valid ({exc})") from exc
+            raise SessionFileError(t("checkpoint.error.not_valid", path=path, reason=exc)) from exc
 
     def add(self, session_id: str, name: str, messages: Sequence[Message]) -> Checkpoint:
         """Raises ``SessionFileError`` for a bad name or file, ``OSError`` if it cannot write."""
@@ -73,7 +75,7 @@ class CheckpointStore:
                 checkpoint.name and checkpoint.name == reference
             ):
                 return checkpoint
-        raise SessionFileError(f"no checkpoint '{reference}' in this session; see /checkpoints")
+        raise SessionFileError(t("checkpoint.error.not_found", reference=reference))
 
     def _write(self, session_id: str, checkpoints: list[Checkpoint]) -> None:
         self.sessions_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -87,11 +89,11 @@ class CheckpointStore:
 
 def _check_name(name: str, checkpoints: list[Checkpoint]) -> None:
     if len(name) > MAX_NAME_CHARS:
-        raise SessionFileError(f"a checkpoint name can have at most {MAX_NAME_CHARS} characters")
+        raise SessionFileError(t("checkpoint.error.name_too_long", max=MAX_NAME_CHARS))
     if name.isdigit():
-        raise SessionFileError("a checkpoint name cannot be only digits: they are its number")
+        raise SessionFileError(t("checkpoint.error.name_digits"))
     if name and any(c.name == name for c in checkpoints):
-        raise SessionFileError(f"there is already a checkpoint named '{name}'")
+        raise SessionFileError(t("checkpoint.error.name_taken", name=name))
 
 
 def _checkpoint_to_json(checkpoint: Checkpoint) -> dict:

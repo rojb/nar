@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from nar.context.manager import ContextManager
+from nar.i18n import t
 from nar.session.checkpoints import Checkpoint, CheckpointStore
 from nar.session.store import Session, SessionStore
 
@@ -39,7 +40,8 @@ class SessionRecorder:
         except OSError as exc:
             if not self._warned:
                 self._warned = True
-                self.warn(f"warning: cannot save the session: {exc.strerror or exc}")
+                reason = exc.strerror or exc
+                self.warn(t("session.save_failed", prefix=t("warning.prefix"), reason=reason))
         else:
             self._warned = False
 

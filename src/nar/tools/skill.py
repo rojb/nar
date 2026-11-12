@@ -39,7 +39,7 @@ class SkillTool(Tool):
         try:
             instructions = read_instructions(skill)
         except SkillError as exc:
-            return ToolResult.error(f"cannot load the skill {skill.name!r}: {exc}")
+            return ToolResult.error(f"cannot load the skill {skill.name!r}: {exc.model_message}")
         folder = skill.folder.resolve()
         return ToolResult.ok(
             f"Skill: {skill.name}\nFolder: {folder}\n\n{instructions}",

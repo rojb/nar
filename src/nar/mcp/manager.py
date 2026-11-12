@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nar.config import McpServerConfig
 from nar.config.paths import mcp_log_dir
 from nar.errors import ToolError
+from nar.i18n import t
 from nar.mcp.expand import MissingVariable, expand_server, referenced_values
 from nar.mcp.naming import tool_name
 from nar.mcp.tool import McpTool
@@ -87,7 +88,7 @@ class McpManager:
             pending.append((entry, config, ()))
         if not pending:
             return manager
-        note("connecting MCP servers: " + ", ".join(entry.name for entry, _, _ in pending) + " ...")
+        note(t("mcp.connecting", names=", ".join(entry.name for entry, _, _ in pending)))
         ready: list[tuple[_Entry, McpServerConfig, tuple[str, ...]]] = []
         for entry, config, _ in pending:
             try:
@@ -140,7 +141,9 @@ class McpManager:
     def _fail(entry: _Entry, reason: str, warn: Callable[[str], None]) -> None:
         entry.state = FAILED
         entry.error = reason
-        warn(f"warning: MCP server '{entry.name}' is not available: {reason}")
+        warn(
+            t("mcp.server_unavailable", prefix=t("warning.prefix"), name=entry.name, reason=reason)
+        )
 
     def statuses(self) -> list[ServerStatus]:
         """The current state of every configured server, in configuration order."""
@@ -192,8 +195,13 @@ class McpManager:
                 name = tool_name(entry.name, spec.name, taken)
                 if name in taken:
                     warn(
-                        f"warning: MCP tool '{spec.name}' of server '{entry.name}' skipped: "
-                        f"its name collides with '{name}'"
+                        t(
+                            "mcp.tool_collides",
+                            prefix=t("warning.prefix"),
+                            tool=spec.name,
+                            server=entry.name,
+                            other=name,
+                        )
                     )
                     continue
                 tool = McpTool(name, entry.name, spec, self, entry.config.tool_timeout)
@@ -201,8 +209,13 @@ class McpManager:
                     registry.register(tool)
                 except ToolError as error:
                     warn(
-                        f"warning: MCP tool '{spec.name}' of server '{entry.name}' "
-                        f"skipped: {error.message}"
+                        t(
+                            "mcp.tool_skipped",
+                            prefix=t("warning.prefix"),
+                            tool=spec.name,
+                            server=entry.name,
+                            reason=error.message,
+                        )
                     )
                     continue
                 taken.add(name)
@@ -216,7 +229,9 @@ class McpManager:
         offered = {spec.name for spec in entry.specs}
         for name in wanted:
             if name not in offered:
-                warn(f"warning: MCP server '{entry.name}' has no tool '{name}' (see enabled_tools)")
+                warn(
+                    t("mcp.no_such_tool", prefix=t("warning.prefix"), server=entry.name, tool=name)
+                )
         return [spec for spec in entry.specs if spec.name in wanted]
 
     def close(self) -> None:

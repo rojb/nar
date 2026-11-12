@@ -194,7 +194,7 @@ def test_preview_over_a_binary_file_explains_why_there_is_no_diff(tmp_path, cont
     assert shown.title == "Overwrite a.bin"
     assert shown.diff is None
     assert "cannot be shown as text" in shown.detail
-    assert "1 lines, 5 bytes" in shown.detail
+    assert "1 line, 5 bytes" in shown.detail
     assert shown.detail.endswith("text\n")
 
 

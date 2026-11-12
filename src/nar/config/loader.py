@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from nar.config import paths
 from nar.config.models import NarConfig
 from nar.errors import ConfigError
+from nar.i18n import t
 
 DEFAULT_SOURCE = "default"
 COMMAND_LINE_SOURCE = "command line"
@@ -84,10 +85,11 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return tomllib.loads(path.read_bytes().decode("utf-8-sig"))
     except tomllib.TOMLDecodeError as exc:
         match = re.search(r"line (\d+)", str(exc))
-        where = f"line {match.group(1)}" if match else "unknown line"
-        raise ConfigError(f"invalid TOML in {path} ({where}): {exc}", path=path) from exc
+        where = t("config.where_line", line=match.group(1)) if match else t("config.where_no_line")
+        message = t("config.toml_invalid", path=path, where=where, reason=exc)
+        raise ConfigError(message, path=path) from exc
     except (OSError, UnicodeDecodeError) as exc:
-        raise ConfigError(f"cannot read {path}: {exc}", path=path) from exc
+        raise ConfigError(t("config.cannot_read", path=path, reason=exc), path=path) from exc
 
 
 def _flatten(value: Any, prefix: str, out: dict[str, Any], source: str | None = None) -> None:
@@ -156,20 +158,29 @@ def _translate(exc: ValidationError, provenance: dict[str, str]) -> ConfigError:
         loc = tuple(err["loc"])
         key = ".".join(str(p) for p in loc)
         source = _source_for(loc, provenance)
-        where = "built-in defaults" if source == DEFAULT_SOURCE else source
+        where = t("config.where_defaults") if source == DEFAULT_SOURCE else source
         if source not in (DEFAULT_SOURCE, COMMAND_LINE_SOURCE) and first_path is None:
             first_path = Path(source)
         if err["type"] == "extra_forbidden":
-            messages.append(f"unknown setting '{key}' in {where}")
+            messages.append(t("config.unknown_setting", setting=key, where=where))
             continue
         allowed = _allowed_values(loc)
         if allowed:
+            value = json.dumps(err.get("input"))
+            allowed_text = ", ".join(allowed)
             messages.append(
-                f"invalid value {json.dumps(err.get('input'))} for setting '{key}' in {where}; "
-                f"allowed values: {', '.join(allowed)}"
+                t(
+                    "config.invalid_value",
+                    value=value,
+                    setting=key,
+                    where=where,
+                    allowed=allowed_text,
+                )
             )
         else:
-            messages.append(f"invalid setting '{key}' in {where}: {err['msg']}")
+            messages.append(
+                t("config.invalid_setting", setting=key, where=where, reason=err["msg"])
+            )
     return ConfigError("; ".join(messages), path=first_path)
 
 
@@ -185,7 +196,11 @@ def _format_value(value: Any) -> str:
 
 
 def _display_source(source: str, cwd: Path | None) -> str:
-    if source in (DEFAULT_SOURCE, COMMAND_LINE_SOURCE) or cwd is None:
+    if source == DEFAULT_SOURCE:
+        return t("config.source.default")
+    if source == COMMAND_LINE_SOURCE:
+        return t("config.source.command_line")
+    if cwd is None:
         return source
     try:
         return Path(source).relative_to(cwd).as_posix()

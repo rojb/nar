@@ -245,10 +245,10 @@ def workdir(tmp_path, monkeypatch):
 def test_show_config_defaults(runner, workdir):
     result = runner.invoke(main, ["--show-config"], interface=None)
     assert result.exit_code == 0
-    assert "provider = openrouter  (default)" in result.output
-    assert "model = openrouter/auto  (default)" in result.output
-    assert "approval = ask  (default)" in result.output
-    assert "language = es  (default)" in result.output
+    assert "provider = openrouter  (predeterminado)" in result.output
+    assert "model = openrouter/auto  (predeterminado)" in result.output
+    assert "approval = ask  (predeterminado)" in result.output
+    assert "language = es  (predeterminado)" in result.output
 
 
 def test_show_config_project_value_and_source(runner, workdir):
@@ -1020,7 +1020,8 @@ def test_language_flag_beats_the_project_file(runner, workdir):
 
 def test_without_the_flag_language_comes_from_the_file_or_the_default(runner, workdir):
     assert (
-        "language = es  (default)" in runner.invoke(main, ["--show-config"], interface=None).output
+        "language = es  (predeterminado)"
+        in runner.invoke(main, ["--show-config"], interface=None).output
     )
 
     (workdir / ".nar").mkdir()
@@ -1137,7 +1138,7 @@ def test_single_mode_asks_on_the_terminal_and_runs_the_approved_call(
     assert result.exit_code == 0
     assert (workdir / "a.txt").read_bytes() == b"hi\n"
     assert result.stdout == "Created.\n"
-    assert "Approval needed: Create a.txt (1 lines)" in result.stderr
+    assert "Approval needed: Create a.txt (1 line)" in result.stderr
     assert "Allow write_file?" in result.stderr
     assert "Approval needed" not in result.stdout
 
@@ -2151,14 +2152,14 @@ def _spanish(runner, lines, **kwargs):
     return runner.invoke(main, [], interface="es", input=lines + "exit\n", **kwargs)
 
 
-def test_config_in_spanish_keeps_the_keys_the_values_and_the_sources(
+def test_config_in_spanish_keeps_the_keys_and_values_and_words_the_sources(
     runner, workdir, fake_provider
 ):
     result = _spanish(runner, "/config\n")
 
-    assert "approval = ask  (default)" in result.stderr
-    assert "language = es  (command line)" in result.stderr
-    assert "max_turns = 20  (default)" in result.stderr
+    assert "approval = ask  (predeterminado)" in result.stderr
+    assert "language = es  (línea de comandos)" in result.stderr
+    assert "max_turns = 20  (predeterminado)" in result.stderr
 
 
 def test_tools_in_spanish_lists_the_tools_with_the_description_the_model_gets(
@@ -2175,7 +2176,7 @@ def test_tokens_and_model_in_spanish_print_spanish_sentences(runner, workdir, fa
 
     assert "contexto: " in result.stderr
     assert " / 128,000 tokens (" in result.stderr
-    assert "proveedor fake (default), modelo fake-model (default)" in result.stderr
+    assert "proveedor fake (predeterminado), modelo fake-model (predeterminado)" in result.stderr
     assert fake_provider.requests == []
 
 

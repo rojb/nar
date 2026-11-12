@@ -11,7 +11,6 @@ from pathlib import Path
 
 from nar.agent.approval import ApprovalGate
 from nar.cli.slash import PendingSkill, SlashContext, register_command
-from nar.config.loader import DEFAULT_SOURCE
 from nar.config.models import ApprovalLevel
 from nar.errors import NarError
 from nar.i18n import t, tn
@@ -52,7 +51,7 @@ def _model_source(context: SlashContext, key: str) -> str:
         return t("cmd.model.source_session")
     loaded = context.loaded
     if loaded is None:
-        return DEFAULT_SOURCE
+        return t("config.source.default")
     return loaded.source_of(key, context.cwd or Path.cwd())
 
 

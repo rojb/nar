@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nar.i18n import t
 from nar.tools.base import Tool, ToolContext, ToolPreview, ToolResult
 from nar.tools.files import (
     BINARY_SNIFF_BYTES,
@@ -53,9 +54,12 @@ class EditFileTool(Tool):
             return ToolResult.error(os_error_message("write", plan.path, exc))
 
         counts = f"(+{plan.added} -{plan.removed})"
+        summary = t(
+            "result.edit.summary", name=plan.path.name, added=plan.added, removed=plan.removed
+        )
         return ToolResult.ok(
             f"edited {plan.path} {counts}\n\n{plan.diff}",
-            summary=f"edited {plan.path.name} {counts}",
+            summary=summary,
             diff=plan.diff,
         )
 
@@ -63,8 +67,9 @@ class EditFileTool(Tool):
         shown = shown_path(resolve_path(arguments["path"], context.cwd), context.cwd)
         plan = _plan(arguments, context)
         if isinstance(plan, ToolResult):
-            return ToolPreview(title=f"Edit {shown}", error=plan.output)
-        return ToolPreview(title=f"Edit {shown} (+{plan.added} -{plan.removed})", diff=plan.diff)
+            return ToolPreview(title=t("preview.edit.title", path=shown), error=plan.output)
+        title = t("preview.edit.title_counts", path=shown, added=plan.added, removed=plan.removed)
+        return ToolPreview(title=title, diff=plan.diff)
 
     def is_project_edit(self, arguments: dict[str, Any], context: ToolContext) -> bool:
         return is_project_path(resolve_path(arguments["path"], context.cwd), context.cwd)
