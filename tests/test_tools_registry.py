@@ -367,6 +367,16 @@ def test_unexpected_exception_is_marked_unexpected():
     assert registry.execute("stub", {"text": "x"}).error_kind is FailureKind.UNEXPECTED_ERROR
 
 
+@pytest.mark.parametrize(("value", "type_name"), [(None, "NoneType"), ("done", "str")])
+def test_a_result_that_is_not_a_tool_result_becomes_an_error(value, type_name):
+    registry = ToolRegistry()
+    registry.register(StubTool(behavior=lambda arguments: value))
+    result = registry.execute("stub", {"text": "x"})
+    assert result.is_error is True
+    assert result.error_kind is FailureKind.TOOL_ERROR
+    assert result.output == f"stub returned {type_name} instead of a ToolResult"
+
+
 def test_a_success_carries_the_default_kind_and_no_error():
     registry = ToolRegistry()
     registry.register(StubTool())
