@@ -342,3 +342,19 @@ def test_the_gate_works_with_the_context_of_a_registry(tmp_path):
     )
 
     assert prompter.requests[0].preview.title == "Edit a.txt (+1 -1)"
+
+
+def test_user_only_summaries_are_spanish_but_the_output_for_the_model_is_not(context):
+    from nar.i18n import set_language
+
+    set_language("es")
+    rejecting, _ = make_gate(ApprovalLevel.ASK, REJECT, context=context)
+    unavailable, _ = make_gate(ApprovalLevel.ASK, available=False, context=context)
+
+    rejected = rejecting(PlainTool(), {"text": "x"})
+    refused = unavailable(PlainTool(), {"text": "x"})
+
+    assert rejected.summary == "rechazado por el usuario"
+    assert refused.summary == "requiere aprobación (no se puede preguntar)"
+    assert "The user rejected this plain call" in rejected.output
+    assert "plain needs user approval" in refused.output

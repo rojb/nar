@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from nar.config.models import ApprovalLevel
+from nar.i18n import t
 from nar.tools.base import FailureKind, Tool, ToolContext, ToolPreview, ToolResult
 from nar.tools.validation import validate_arguments
 
@@ -129,7 +130,10 @@ def _rejected(tool: Tool, reason: str | None) -> ToolResult:
     if reason:
         message += f' The user said: "{reason}"'
     return ToolResult(
-        output=message, is_error=True, summary="rejected by user", error_kind=FailureKind.REFUSED
+        output=message,
+        is_error=True,
+        summary=t("approval.summary.rejected"),
+        error_kind=FailureKind.REFUSED,
     )
 
 
@@ -144,6 +148,6 @@ def _unavailable(tool: Tool) -> ToolResult:
     return ToolResult(
         output=message,
         is_error=True,
-        summary="needs approval (cannot ask)",
+        summary=t("approval.summary.unavailable"),
         error_kind=FailureKind.REFUSED,
     )

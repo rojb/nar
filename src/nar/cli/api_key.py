@@ -15,6 +15,7 @@ from typing import Protocol
 
 from nar.config import NarConfig, ProviderName
 from nar.errors import ProviderError
+from nar.i18n import t
 from nar.providers import factory
 
 Note = Callable[[str], None]
@@ -59,18 +60,18 @@ def obtain_api_key(config: NarConfig, prompter: KeyAsker) -> PendingKey | None:
 def keep_api_key(pending: PendingKey, prompter: KeyAsker, note: Note, warn: Note) -> None:
     """After the check passed: save it for the user if they want, on Windows."""
     if not prompter.ask_save(pending.env):
-        note(f"{pending.env} is set for this session only")
+        note(t("key.session_only", env=pending.env))
         return
     if not can_save_user_variables():
-        note(f"not saved: add 'export {pending.env}=<your key>' to your shell profile")
+        note(t("key.not_saved", env=pending.env))
         return
     try:
         save_user_variable(pending.env, pending.value)
     except OSError as exc:
         reason = exc.strerror or type(exc).__name__
-        warn(f"could not save {pending.env} ({reason}); it works for this session")
+        warn(t("key.save_failed", env=pending.env, reason=reason))
         return
-    note(f"saved {pending.env} for your Windows user; new terminals will see it")
+    note(t("key.saved", env=pending.env))
 
 
 def prepare_api_key(config: NarConfig, prompter: KeyAsker, note: Note, warn: Note) -> None:
@@ -82,7 +83,7 @@ def prepare_api_key(config: NarConfig, prompter: KeyAsker, note: Note, warn: Not
     if pending is None:
         return
     try:
-        note(f"checking {config.provider} · {config.model}...")
+        note(t("runner.checking", provider=config.provider, model=config.model))
         factory.create_provider(config).check()
     except (ProviderError, KeyboardInterrupt):
         pending.discard()

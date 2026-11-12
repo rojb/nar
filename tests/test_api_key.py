@@ -307,3 +307,26 @@ def test_startup_without_a_terminal_does_nothing(monkeypatch):
 
     monkeypatch.setattr("nar.providers.factory.create_provider", create)
     prepare_api_key(deepseek(), FakePrompter(available=False), Lines().note, Lines().warn)
+
+
+def test_key_notes_in_spanish(monkeypatch, saved):
+    from nar.i18n import set_language
+
+    set_language("es")
+    lines = Lines()
+    keep_api_key(
+        PendingKey("DEEPSEEK_API_KEY", SECRET), FakePrompter(save=False), lines.note, lines.warn
+    )
+    keep_api_key(
+        PendingKey("DEEPSEEK_API_KEY", SECRET), FakePrompter(save=True), lines.note, lines.warn
+    )
+    monkeypatch.setattr(api_key, "can_save_user_variables", lambda: False)
+    keep_api_key(
+        PendingKey("DEEPSEEK_API_KEY", SECRET), FakePrompter(save=True), lines.note, lines.warn
+    )
+    assert lines.notes == [
+        "DEEPSEEK_API_KEY queda definida solo para esta sesión",
+        "DEEPSEEK_API_KEY guardada para tu usuario de Windows; las terminales nuevas la verán",
+        "no se guardó: agrega 'export DEEPSEEK_API_KEY=<tu clave>' al perfil de tu shell",
+    ]
+    assert SECRET not in lines.all()

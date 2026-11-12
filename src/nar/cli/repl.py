@@ -10,6 +10,7 @@ import click
 from nar.config import NarConfig
 from nar.context import ProjectInstructions
 from nar.errors import ProviderError
+from nar.i18n import t
 
 if TYPE_CHECKING:
     from nar.cli.slash import SlashContext
@@ -60,14 +61,14 @@ def run(
     from nar.ui.session_view import render_history
 
     if instructions is not None:
-        click.echo(f"Using AGENTS.md: {instructions.path}")
+        click.echo(t("repl.using_instructions", path=instructions.path))
     view = AgentView()
     # A missing key stops here.
     agent = create_agent(
         config, Path.cwd(), instructions, view, trust_project_tools=trust_project_tools
     )
     with connect_mcp(config, agent, view) as mcp:
-        click.echo(f"nar · {agent.provider.name} · {agent.provider.model}. Type 'exit' to leave.")
+        click.echo(t("repl.banner", provider=agent.provider.name, model=agent.provider.model))
         recorder = open_session(agent, view, Path.cwd(), resumed)
         if resumed is not None:
             render_history(agent.context.messages, view.err)

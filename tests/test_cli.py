@@ -2220,3 +2220,71 @@ def test_models_in_spanish_counts_and_marks_the_one_in_use(runner, workdir, fake
     assert "  fake-model  ← en uso" in result.stderr
     assert "fake: coincide 1 de 2 modelos con 'fake'" in result.stderr
     assert "fake: ningún modelo coincide con 'zzz' (2 modelos)" in result.stderr
+
+
+# --- REPL banner, runner and key messages (RRG-98, slice 3) ------------------------------------
+
+
+def test_banner_with_no_configuration_is_spanish_by_default(runner, workdir, fake_provider):
+    result = runner.invoke(main, [], interface=None, input="exit\n")
+
+    assert "nar · fake · fake-model. Escribe 'exit' para salir." in result.stdout
+    assert "Type 'exit'" not in result.stdout
+
+
+def test_banner_with_language_en_is_english(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["--language", "en"], input="exit\n")
+
+    assert "nar · fake · fake-model. Type 'exit' to leave." in result.stdout
+    assert "Escribe" not in result.stdout
+
+
+def test_agents_md_line_in_spanish(runner, workdir, fake_provider):
+    (workdir / "AGENTS.md").write_text("Be brief.", encoding="utf-8")
+    result = _spanish(runner, "")
+
+    assert f"Usando AGENTS.md: {(workdir / 'AGENTS.md').resolve()}" in result.output
+
+
+def test_the_prompt_stays_nar_in_both_languages(runner, workdir, fake_provider):
+    assert "nar> " in _spanish(runner, "").stdout
+    assert "nar> " in runner.invoke(main, [], input="exit\n").stdout
+
+
+def test_waiting_text_names_the_model_in_each_language(runner, workdir, fake_provider):
+    from nar.cli.runner import create_agent
+    from nar.config import NarConfig
+    from nar.i18n import set_language
+    from nar.ui.agent_view import AgentView
+
+    for language, expected in (
+        ("es", "esperando a fake-model..."),
+        ("en", "waiting for fake-model..."),
+    ):
+        set_language(language)
+        view = AgentView()
+        create_agent(NarConfig(), workdir, None, view)
+        assert view.waiting_text == expected
+
+
+def test_model_switch_messages_in_spanish(runner, monkeypatch):
+    two_providers(monkeypatch)
+    result = _spanish(runner, "/model ollama\n/model nope\n/model\n")
+
+    assert "comprobando ollama · qwen2.5-coder..." in result.stderr
+    assert "modelo: ollama · qwen2.5-coder" in result.stderr
+    assert "error: proveedor desconocido 'nope'; usa anthropic, openrouter, ollama, deepseek" in (
+        result.stderr
+    )
+
+
+def test_model_listing_and_session_messages_in_spanish(runner, workdir, fake_provider):
+    result = _spanish(runner, "/models\n")
+
+    assert "listando los modelos de fake..." in result.stderr
+
+
+def test_compacting_an_empty_conversation_says_so_in_spanish(runner, workdir, fake_provider):
+    result = _spanish(runner, "/compact\n")
+
+    assert "contexto: no hay nada que compactar" in result.stderr
