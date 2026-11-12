@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 _COMMAND = re.compile(r"^/([A-Za-z][A-Za-z0-9-]*)(?:\s+(.*))?$")
 
 
+@dataclass(frozen=True)
+class PendingSkill:
+    """A skill the user chose with ``/skill``, waiting for the next request."""
+
+    name: str
+    folder: Path
+    instructions: str
+
+
 @dataclass
 class SlashContext:
     """What a command may use: the MCP manager, the terminal streams, the agent and its view."""
@@ -41,6 +50,8 @@ class SlashContext:
     recorder: SessionRecorder | None = None
     loaded: object | None = None  # LoadedConfig; only /config reads it
     cwd: Path | None = None
+    pending_skill: PendingSkill | None = None  # added to the next request, then cleared
+    queued_request: str | None = None  # a request a command asks the REPL to send at once
 
 
 Handler = Callable[[SlashContext, str], None]

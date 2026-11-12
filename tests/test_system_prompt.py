@@ -3,6 +3,7 @@ from pathlib import Path
 
 from nar.agent.prompt import build_subagent_prompt, build_system_prompt
 from nar.context import ProjectInstructions
+from nar.skills import Skill, parse_skill
 
 CWD = Path("/home/user/project")
 
@@ -91,3 +92,50 @@ def test_subagent_prompt_leaves_out_memory_and_the_main_guidelines():
     assert "Memory" not in text
     assert "todos" not in text
     assert "task tool" not in text
+
+
+def demo_skills():
+    return [
+        Skill("demo", "Shows how skills work", Path("/skills/demo"), "project"),
+        Skill("release", "Cuts a release", Path("/skills/release"), "user"),
+    ]
+
+
+def test_skills_are_listed_with_their_descriptions_in_the_given_order():
+    prompt = build_system_prompt(CWD, skills=demo_skills())
+
+    assert "# Skills" in prompt
+    assert "- demo: Shows how skills work\n- release: Cuts a release" in prompt
+    assert "call the skill tool" in prompt
+    assert "matches" in prompt
+
+
+def test_skills_section_comes_after_memory_and_project_instructions():
+    instructions = ProjectInstructions(CWD / "AGENTS.md", "Be brief", truncated=False)
+
+    prompt = build_system_prompt(CWD, instructions, {"k": "v"}, demo_skills())
+
+    assert prompt.index("# Memory") < prompt.index("# Project instructions")
+    assert prompt.index("# Project instructions") < prompt.index("# Skills")
+
+
+def test_skills_section_never_holds_the_instructions(tmp_path):
+    folder = tmp_path / "demo"
+    folder.mkdir()
+    (folder / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Short\n---\nSECRET-INSTRUCTIONS", encoding="utf-8"
+    )
+
+    prompt = build_system_prompt(CWD, skills=[parse_skill(folder, "project")])
+
+    assert "- demo: Short" in prompt
+    assert "SECRET-INSTRUCTIONS" not in prompt
+
+
+def test_no_skills_section_without_skills():
+    assert "# Skills" not in build()
+    assert "# Skills" not in build_system_prompt(CWD, skills=())
+
+
+def test_subagent_prompt_has_no_skills_section():
+    assert "# Skills" not in subagent()

@@ -35,9 +35,11 @@ from nar.hooks import HookRunner
 from nar.mcp import McpManager
 from nar.providers import factory
 from nar.session import Session, SessionRecorder, SessionStore, sessions_dir
+from nar.skills import discover_skills
 from nar.tools import create_default_registry
 from nar.tools.custom import load_custom_tools
 from nar.tools.memory import MemoryFileError, MemoryStore, memory_path
+from nar.tools.skill import SkillTool
 from nar.ui.agent_view import AgentView
 from nar.ui.approval_prompt import TerminalPrompter
 from nar.ui.key_prompt import KeyPrompter
@@ -65,7 +67,8 @@ def create_agent(
     prepare_api_key(config, KeyPrompter(view.err), view.note, view.warn)
     provider = factory.create_provider(config, on_retry=view.retry)
     view.waiting_text = f"waiting for {provider.model}..."
-    context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view)))
+    skills = discover_skills(cwd, view.warn)
+    context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view), skills))
     registry = create_default_registry(cwd)
     prompter = TerminalPrompter(view.tools)
     limits = ContextLimits(
@@ -100,6 +103,9 @@ def create_agent(
             progress=view.subagents,
         )
     )
+    agent.skills = skills
+    if skills:
+        registry.register(SkillTool(skills))
     # Last: a custom tool cannot take the name of any tool above.
     load_custom_tools(
         registry, cwd, TrustPrompter(view.err), trust_project_tools, view.note, view.warn

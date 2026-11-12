@@ -12,6 +12,7 @@ from nar.mcp.manager import ServerStatus
 from nar.providers.base import LLMProvider
 from nar.providers.messages import LLMResponse, Message, ResponseDone
 from nar.session import Session, SessionRecorder, SessionStore
+from nar.skills import parse_skill
 from nar.tools.registry import ToolRegistry
 from nar.ui.agent_view import AgentView
 
@@ -429,3 +430,133 @@ def test_checkpoint_files_do_not_appear_as_sessions(session_context):
     sessions, invalid = store.list()
     assert [s.id for s in sessions] == ["current"]
     assert invalid == 0
+
+
+def skills_context(tmp_path, *specs):
+    """A command context whose agent has the skills ``specs`` = (name, origin, description)."""
+    skills = []
+    for name, origin, description in specs:
+        folder = tmp_path / origin / name
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\nBody of {name}.\n",
+            encoding="utf-8",
+        )
+        skills.append(parse_skill(folder, origin))
+    context, out, err = make_context(None)
+    context.agent = Agent(SummaryProvider("x"), ToolRegistry(), ContextManager("system"))
+    context.agent.skills = tuple(skills)
+    return context, out, err
+
+
+def test_skills_lists_name_origin_and_description_on_standard_error(tmp_path):
+    context, out, err = skills_context(
+        tmp_path, ("demo", "project", "Shows skills"), ("release", "user", "Cuts a release")
+    )
+
+    assert slash.dispatch("/skills", context) is True
+
+    assert err.getvalue().splitlines() == [
+        "demo (project): Shows skills",
+        "release (user): Cuts a release",
+    ]
+    assert out.getvalue() == ""
+
+
+def test_skills_without_skills_names_both_folders(tmp_path, monkeypatch):
+    monkeypatch.setenv("NAR_HOME", str(tmp_path / "narhome"))
+    context, out, err = skills_context(tmp_path)
+
+    slash.dispatch("/skills", context)
+
+    text = err.getvalue()
+    assert "no skills found" in text
+    assert ".nar/skills/" in text
+    assert str(tmp_path / "narhome" / "skills") in text.replace("\n", "")
+    assert out.getvalue() == ""
+
+
+def test_skills_without_an_agent_says_there_are_none():
+    context, out, err = make_context(None)
+
+    slash.dispatch("/skills", context)
+
+    assert "no skills found" in err.getvalue()
+
+
+def test_skill_stores_the_instructions_and_says_so(tmp_path):
+    context, out, err = skills_context(tmp_path, ("demo", "project", "Shows skills"))
+
+    slash.dispatch("/skill demo", context)
+
+    pending = context.pending_skill
+    assert (pending.name, pending.instructions) == ("demo", "Body of demo.")
+    assert pending.folder == (tmp_path / "project" / "demo").resolve()
+    assert context.queued_request is None
+    assert err.getvalue().strip() == "Skill demo will be used with the next request."
+    assert out.getvalue() == ""
+
+
+def test_skill_with_a_request_queues_it(tmp_path):
+    context, out, err = skills_context(tmp_path, ("demo", "project", "Shows skills"))
+
+    slash.dispatch("/skill demo write the changelog", context)
+
+    assert context.pending_skill.name == "demo"
+    assert context.queued_request == "write the changelog"
+
+
+@pytest.mark.parametrize("line", ["/skill nope", "/skill nope do it", "/skill"])
+def test_skill_unknown_or_missing_name_lists_the_skills_and_adds_nothing(tmp_path, line):
+    context, out, err = skills_context(
+        tmp_path, ("demo", "project", "Shows skills"), ("release", "user", "Cuts a release")
+    )
+
+    slash.dispatch(line, context)
+
+    assert err.getvalue().startswith("error: ")
+    assert "available skills: demo, release" in err.getvalue()
+    assert context.pending_skill is None
+    assert context.queued_request is None
+    assert out.getvalue() == ""
+
+
+def test_skill_with_no_skills_says_none_are_available(tmp_path):
+    context, out, err = skills_context(tmp_path)
+
+    slash.dispatch("/skill demo", context)
+
+    assert "available skills: none" in err.getvalue()
+    assert context.pending_skill is None
+
+
+def test_skill_whose_file_is_gone_prints_an_error_and_adds_nothing(tmp_path):
+    context, out, err = skills_context(tmp_path, ("demo", "project", "Shows skills"))
+    context.agent.skills[0].file.unlink()
+
+    slash.dispatch("/skill demo go", context)
+
+    assert err.getvalue().startswith("error: cannot load the skill 'demo'")
+    assert "SKILL.md" in err.getvalue()
+    assert context.pending_skill is None
+    assert context.queued_request is None
+
+
+def test_a_new_skill_command_replaces_the_pending_skill(tmp_path):
+    context, out, err = skills_context(
+        tmp_path, ("demo", "project", "Shows skills"), ("release", "user", "Cuts a release")
+    )
+
+    slash.dispatch("/skill demo", context)
+    slash.dispatch("/skill release", context)
+
+    assert context.pending_skill.name == "release"
+
+
+def test_clear_drops_the_pending_skill(tmp_path):
+    context, out, err = skills_context(tmp_path, ("demo", "project", "Shows skills"))
+    slash.dispatch("/skill demo", context)
+
+    slash.dispatch("/clear", context)
+
+    assert context.pending_skill is None

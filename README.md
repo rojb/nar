@@ -85,7 +85,8 @@ again, until the model answers without tools or `max_turns` model calls were mad
   approval level says otherwise (see "Approvals"). If you say no, or `nar` cannot ask, the model
   is told and can try something else or answer.
 - **System prompt:** it tells the model it is `nar`, how to use its tools, the working
-  directory, OS and date, and adds the project's `AGENTS.md` when one is found.
+  directory, OS and date, and adds the project's `AGENTS.md` and the list of available skills
+  (see "Skills") when there are any.
 
 ## Commands
 
@@ -105,6 +106,8 @@ standard error, so a redirected run keeps only the answer.
 | `/sessions` | list the saved sessions |
 | `/resume` | continue a saved session: `/resume [id]` |
 | `/mcp` | show the MCP servers and their tools |
+| `/skills` | list the available skills and where each came from |
+| `/skill` | use a skill for the next request: `/skill <name> [request]` |
 | `/exit` | leave, exactly like `exit` |
 
 - **`/model` and `/approval` change the session in place.** The conversation, the tools and the
@@ -450,6 +453,53 @@ pipe, CI) they are skipped with a warning, unless you pass `--trust-project-tool
 `.nar/config.toml` nor `--approval yolo` can allow them, because a repository can ship its own
 configuration.
 
+## Skills
+
+A skill is a folder with a `SKILL.md` file of specialized instructions that the agent reads only
+when a request needs them. Put skill folders in one of these places and start `nar`:
+
+| Folder | Scope |
+|---|---|
+| `~/.nar/skills/<name>/SKILL.md` (`$NAR_HOME/skills/` when set) | all your projects |
+| `.nar/skills/<name>/SKILL.md` | this project |
+
+There is a working example in [`examples/skills/changelog/`](examples/skills/changelog/SKILL.md):
+
+```markdown
+---
+name: changelog
+description: Write or update CHANGELOG.md entries from recent git commits. Use when the user asks for a changelog.
+---
+
+# Writing a changelog entry
+
+1. List what changed with `git log <last tag>..HEAD --oneline`.
+2. Group the commits with the headings in [`template.md`](template.md).
+```
+
+- **The file starts with YAML frontmatter** between two `---` lines, then the instructions in
+  Markdown. `name` and `description` are required. `name` uses lowercase letters, digits and
+  hyphens (at most 64 characters) and must equal the folder name; `description` is at most 1024
+  characters and should say what the skill does and when to use it. Other keys are ignored.
+- **The folder can hold other files** (templates, reference notes, scripts) that the instructions
+  refer to. The agent gets the folder's absolute path with the instructions, so it can read them.
+- **The agent sees only the name and description.** They are listed in the system prompt, and when
+  a request matches, the agent calls the `skill` tool to read the instructions. That tool needs no
+  approval and reads the file each time, so edits to a `SKILL.md` apply without a restart.
+- **Project skills win.** If both folders have a skill with the same name, the project one is used
+  and the other is ignored. A skill added after `nar` started needs a restart to be listed.
+- **A broken skill is skipped with one warning** that names the file and the reason (no
+  frontmatter, name different from the folder, description too long, ...); the other skills still
+  load.
+- `/skills` lists the available skills with their origin (`project` or `user`).
+  `/skill <name>` adds a skill's instructions to your next request; `/skill <name> <request>`
+  sends the request at once. `/clear` drops a skill that was waiting for the next request.
+
+**`nar` never runs anything from a skill folder.** The files are only text. A command or script
+that the instructions mention runs only if the agent calls a tool for it, and then it goes through
+the usual approvals. Project skills load without asking, like `AGENTS.md`, so read the
+`SKILL.md` of a repository you do not trust before you rely on it.
+
 ## Providers
 
 | Provider | Default model | Needs |
@@ -520,6 +570,7 @@ python scripts/run_tool.py read_file '{"path": "pyproject.toml", "limit": 5}'
 | `todos` | Keep the agent's task list for the session, shown as a `[ ]`/`[>]`/`[x]` checklist. | no |
 | `memory` | Save, delete and list short facts that are given to the agent in every new session. | no |
 | `shell` | Run a command line in PowerShell (Windows) or bash/sh; returns exit code, stdout and stderr. | yes |
+| `skill` | Load the instructions of a skill (see "Skills"); only registered when a skill exists. | no |
 
 `write_file`, `edit_file` and `shell` require approval: `nar` asks before running them (see
 "Approvals"). `scripts/run_tool.py` always runs them.

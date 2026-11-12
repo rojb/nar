@@ -67,6 +67,7 @@ class FakeProvider:
         self.on_retry = None
         self.script = []
         self.requests = []
+        self.system = None
         self.checks = 0
         self.check_error = None  # raised by check(): a ProviderError or KeyboardInterrupt
 
@@ -88,6 +89,7 @@ class FakeProvider:
 
     def stream(self, messages, *, system=None, tools=(), max_tokens=100):
         self.requests.append(list(messages))
+        self.system = system
         self.tool_names = [tool["name"] for tool in tools]
         step = self.script.pop(0) if self.script else LLMResponse("Hello there")
         if isinstance(step, BaseException):
@@ -1843,3 +1845,158 @@ def test_clear_leaves_no_earlier_message_in_the_session_file(runner, fake_provid
 def test_exit_command_leaves_with_code_zero(runner, fake_provider):
     result = runner.invoke(main, [], input="/exit\n")
     assert result.exit_code == 0
+
+
+def write_skill(root, name, description="Shows how skills work", body="Do the demo."):
+    folder = root / name
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n{body}\n", encoding="utf-8"
+    )
+    return folder
+
+
+def test_skills_are_listed_in_the_system_prompt_and_the_tool_is_registered(
+    runner, workdir, fake_provider
+):
+    write_skill(workdir / ".nar" / "skills", "demo", body="SECRET-BODY")
+
+    result = runner.invoke(main, ["hola"])
+
+    assert result.exit_code == 0
+    assert "- demo: Shows how skills work" in fake_provider.system
+    assert "SECRET-BODY" not in fake_provider.system
+    assert "skill" in fake_provider.tool_names
+
+
+def test_without_skills_there_is_no_section_no_tool_and_no_warning(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["hola"])
+
+    assert result.exit_code == 0
+    assert "# Skills" not in fake_provider.system
+    assert "skill" not in fake_provider.tool_names
+    assert result.stderr == ""
+
+
+def test_a_broken_skill_warns_and_startup_continues(runner, workdir, fake_provider):
+    write_skill(workdir / ".nar" / "skills", "demo")
+    broken = workdir / ".nar" / "skills" / "broken"
+    broken.mkdir()
+    (broken / "SKILL.md").write_text("only markdown", encoding="utf-8")
+
+    result = runner.invoke(main, ["hola"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "Hello there\n"
+    assert str(broken / "SKILL.md") in result.stderr
+    assert "frontmatter is missing" in result.stderr
+    assert "- demo:" in fake_provider.system
+    assert "- broken:" not in fake_provider.system
+
+
+def test_the_model_can_call_the_skill_tool_without_approval(runner, workdir, fake_provider):
+    folder = write_skill(workdir / ".nar" / "skills", "demo", body="Follow the demo steps.")
+    fake_provider.script = [
+        LLMResponse("", (ToolCall("c1", "skill", {"name": "demo"}),), StopReason.TOOL_CALLS),
+    ]
+
+    result = runner.invoke(main, ["use the demo"])
+
+    assert result.exit_code == 0
+    tool_result = fake_provider.requests[1][-1].content
+    assert "Follow the demo steps." in tool_result
+    assert str(folder.resolve()) in tool_result
+
+
+def composed(name, folder, instructions, request):
+    return (
+        f'The user chose the skill "{name}" for this request. Its folder is {folder}.\n'
+        f"Follow its instructions:\n\n{instructions}\n\nRequest:\n{request}"
+    )
+
+
+def test_skills_command_lists_skills_with_origin_on_standard_error(runner, workdir, fake_provider):
+    write_skill(workdir / ".nar" / "skills", "demo", "Project demo")
+    write_skill(workdir.parent / "home" / "skills", "release", "User release")
+
+    result = runner.invoke(main, [], input="/skills\nexit\n")
+
+    assert "demo (project): Project demo" in result.stderr
+    assert "release (user): User release" in result.stderr
+    assert "demo (project)" not in result.stdout
+
+
+def test_skills_command_without_skills_names_both_folders(runner, workdir, fake_provider):
+    result = runner.invoke(main, [], input="/skills\nexit\n")
+
+    assert "no skills found" in result.stderr
+    assert ".nar/skills/" in result.stderr
+    assert "home" in result.stderr
+    assert "no skills found" not in result.stdout
+
+
+def test_skill_then_a_request_sends_one_message_with_the_instructions(
+    runner, workdir, fake_provider
+):
+    folder = write_skill(workdir / ".nar" / "skills", "demo", body="Use the demo style.")
+
+    result = runner.invoke(main, [], input="/skill demo\nwrite the changelog\nexit\n")
+
+    assert "Skill demo will be used with the next request." in result.stderr
+    assert len(fake_provider.requests) == 1
+    assert [m.content for m in fake_provider.requests[0]] == [
+        composed("demo", folder.resolve(), "Use the demo style.", "write the changelog")
+    ]
+    assert "Skill demo will be used" not in result.stdout
+
+
+def test_skill_with_a_request_sends_it_at_once(runner, workdir, fake_provider):
+    folder = write_skill(workdir / ".nar" / "skills", "demo", body="Use the demo style.")
+
+    result = runner.invoke(main, [], input="/skill demo write the changelog\nexit\n")
+
+    assert result.exit_code == 0
+    assert fake_provider.prompts == [
+        composed("demo", folder.resolve(), "Use the demo style.", "write the changelog")
+    ]
+    assert result.stdout.count("Hello there") == 1
+
+
+def test_the_skill_applies_to_one_request_only(runner, workdir, fake_provider):
+    write_skill(workdir / ".nar" / "skills", "demo")
+
+    runner.invoke(main, [], input="/skill demo\nfirst\nsecond\nexit\n")
+
+    assert "Do the demo." in fake_provider.requests[0][-1].content
+    assert fake_provider.requests[1][-1].content == "second"
+
+
+def test_unknown_skill_lists_the_skills_and_the_next_request_has_none(
+    runner, workdir, fake_provider
+):
+    write_skill(workdir / ".nar" / "skills", "demo")
+
+    result = runner.invoke(main, [], input="/skill nope\nhello\nexit\n")
+
+    assert "available skills: demo" in result.stderr
+    assert fake_provider.prompts == ["hello"]
+
+
+def test_clear_after_skill_sends_the_next_request_without_it(runner, workdir, fake_provider):
+    write_skill(workdir / ".nar" / "skills", "demo")
+
+    runner.invoke(main, [], input="/skill demo\n/clear\nhello\nexit\n")
+
+    assert fake_provider.prompts == ["hello"]
+
+
+def test_skill_is_read_from_disk_when_the_command_runs(runner, workdir, fake_provider):
+    folder = write_skill(workdir / ".nar" / "skills", "demo", body="old text")
+    (folder / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: D\n---\nnew text\n", encoding="utf-8"
+    )
+
+    runner.invoke(main, [], input="/skill demo\nhello\nexit\n")
+
+    assert "new text" in fake_provider.requests[0][-1].content
+    assert "old text" not in fake_provider.requests[0][-1].content

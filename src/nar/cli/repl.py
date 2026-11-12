@@ -12,10 +12,25 @@ from nar.context import ProjectInstructions
 from nar.errors import ProviderError
 
 if TYPE_CHECKING:
+    from nar.cli.slash import SlashContext
     from nar.session import Session
 
 PROMPT = "nar> "
 EXIT_WORDS = {"exit"}
+
+
+def with_pending_skill(commands: SlashContext, line: str) -> str:
+    """The request with the skill chosen by ``/skill`` in front of it; the skill is used up."""
+    pending, commands.pending_skill = commands.pending_skill, None
+    if pending is None:
+        return line
+    return (
+        f'The user chose the skill "{pending.name}" for this request. '
+        f"Its folder is {pending.folder}.\n"
+        "Follow its instructions:\n\n"
+        f"{pending.instructions}\n\n"
+        f"Request:\n{line}"
+    )
 
 
 def run(
@@ -72,7 +87,11 @@ def run(
             if line in EXIT_WORDS:
                 return
             if slash.dispatch(line, commands):
-                continue
+                if commands.queued_request is None:
+                    continue
+                # /skill <name> <request>: send the request now.
+                line, commands.queued_request = commands.queued_request, None
+            line = with_pending_skill(commands, line)
             try:
                 run_request(agent, view, line, recorder)
             except KeyboardInterrupt:
