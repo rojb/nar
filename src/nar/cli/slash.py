@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 from rich.text import Text
 
+from nar.i18n import t, tn
 from nar.mcp.manager import McpManager
 from nar.ui.mcp_view import render_mcp_status
 
@@ -59,14 +60,18 @@ Handler = Callable[[SlashContext, str], None]
 _COMMANDS: dict[str, tuple[Handler, str]] = {}
 
 
-def register_command(name: str, handler: Handler, summary: str) -> None:
-    """Make ``/<name>`` run ``handler(context, argument_text)``."""
-    _COMMANDS[name] = (handler, summary)
+def register_command(name: str, handler: Handler, summary_key: str) -> None:
+    """Make ``/<name>`` run ``handler(context, argument_text)``.
+
+    ``summary_key`` is a catalog key, not text: it is resolved when the commands are listed,
+    so the summary follows the language set after this module was imported.
+    """
+    _COMMANDS[name] = (handler, summary_key)
 
 
 def commands() -> list[tuple[str, str]]:
-    """Every registered command with its summary, alphabetical."""
-    return sorted((name, entry[1]) for name, entry in _COMMANDS.items())
+    """Every registered command with its summary in the active language, alphabetical."""
+    return sorted((name, t(entry[1])) for name, entry in _COMMANDS.items())
 
 
 def parse_slash(line: str) -> tuple[str, str] | None:
@@ -87,7 +92,7 @@ def dispatch(line: str, context: SlashContext) -> bool:
     if entry is None:
         available = ", ".join(f"/{command}" for command in _COMMANDS)
         context.err.print(
-            Text(f"error: /{name} is not a command; available: {available}", "red"),
+            Text(t("cmd.not_a_command", name=name, available=available), "red"),
             highlight=False,
             soft_wrap=True,
         )
@@ -104,7 +109,7 @@ def _mcp_command(context: SlashContext, argument: str) -> None:
 def _compact_command(context: SlashContext, argument: str) -> None:
     if argument:
         context.err.print(
-            Text("error: /compact does not take arguments", "red"),
+            Text(t("cmd.compact.no_arguments"), "red"),
             highlight=False,
             soft_wrap=True,
         )
@@ -141,7 +146,7 @@ def _resume_command(context: SlashContext, argument: str) -> None:
         view.error(exc.message)
         return
     if session is None:
-        view.error(f"there is no other saved session in {cwd}")
+        view.error(t("cmd.resume.none_other", cwd=cwd))
         return
     recorder.save()
     continue_session(context.agent, view, recorder, session, cwd)
@@ -154,19 +159,17 @@ def _checkpoint_command(context: SlashContext, argument: str) -> None:
 
     view = context.view
     if not context.agent.context.messages:
-        view.error("there is nothing to save yet")
+        view.error(t("cmd.checkpoint.nothing"))
         return
     try:
         checkpoint = context.recorder.checkpoint(argument)
     except NarError as exc:
         view.error(exc.message)
     except OSError as exc:
-        view.error(f"cannot save the checkpoint: {exc.strerror or exc}")
+        view.error(t("cmd.checkpoint.cannot_save", reason=exc.strerror or exc))
     else:
-        label = f"checkpoint {checkpoint.id} saved"
-        if checkpoint.name:
-            label += f": {checkpoint.name}"
-        view.note(f"{label} ({len(checkpoint.messages)} messages)")
+        key = "cmd.checkpoint.saved_named" if checkpoint.name else "cmd.checkpoint.saved"
+        view.note(tn(key, len(checkpoint.messages), id=checkpoint.id, name=checkpoint.name))
 
 
 def _checkpoints_command(context: SlashContext, argument: str) -> None:
@@ -188,27 +191,24 @@ def _restore_command(context: SlashContext, argument: str) -> None:
 
     view = context.view
     if not argument:
-        view.error("use /restore <id or name>; /checkpoints lists them")
+        view.error(t("cmd.restore.usage"))
         return
     try:
         checkpoint = context.recorder.restore(argument)
     except NarError as exc:
         view.error(exc.message)
         return
-    view.note(
-        f"restored checkpoint {checkpoint.id}: the conversation now has "
-        f"{len(checkpoint.messages)} messages; files changed by tools were not restored"
-    )
+    view.note(tn("cmd.restore.done", len(checkpoint.messages), id=checkpoint.id))
     show_context_usage(context.agent, view)
 
 
-register_command("mcp", _mcp_command, "show the MCP servers and their tools")
-register_command("compact", _compact_command, "summarize the conversation to free context")
-register_command("sessions", _sessions_command, "list the saved sessions")
-register_command("resume", _resume_command, "continue a saved session: /resume [id]")
-register_command("checkpoint", _checkpoint_command, "save this point: /checkpoint [name]")
-register_command("checkpoints", _checkpoints_command, "list the checkpoints of this session")
-register_command("restore", _restore_command, "go back to a checkpoint: /restore <id or name>")
+register_command("mcp", _mcp_command, "command.mcp.summary")
+register_command("compact", _compact_command, "command.compact.summary")
+register_command("sessions", _sessions_command, "command.sessions.summary")
+register_command("resume", _resume_command, "command.resume.summary")
+register_command("checkpoint", _checkpoint_command, "command.checkpoint.summary")
+register_command("checkpoints", _checkpoints_command, "command.checkpoints.summary")
+register_command("restore", _restore_command, "command.restore.summary")
 
 
 # Imported last on purpose: it registers the base commands and needs the table above.

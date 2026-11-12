@@ -2142,3 +2142,149 @@ def test_skill_is_read_from_disk_when_the_command_runs(runner, workdir, fake_pro
 
     assert "new text" in fake_provider.requests[0][-1].content
     assert "old text" not in fake_provider.requests[0][-1].content
+
+
+# --- slash commands in Spanish (RRG-98, slice 3) ---------------------------------------------
+
+
+def _spanish(runner, lines, **kwargs):
+    return runner.invoke(main, [], interface="es", input=lines + "exit\n", **kwargs)
+
+
+def test_config_in_spanish_keeps_the_keys_the_values_and_the_sources(
+    runner, workdir, fake_provider
+):
+    result = _spanish(runner, "/config\n")
+
+    assert "approval = ask  (default)" in result.stderr
+    assert "language = es  (command line)" in result.stderr
+    assert "max_turns = 20  (default)" in result.stderr
+
+
+def test_tools_in_spanish_lists_the_tools_with_the_description_the_model_gets(
+    runner, workdir, fake_provider
+):
+    result = _spanish(runner, "/tools\n")
+
+    assert "read_file: Read a text file and return its lines" in result.stderr
+    assert "\nshell: Run a command line" in result.stderr
+
+
+def test_tokens_and_model_in_spanish_print_spanish_sentences(runner, workdir, fake_provider):
+    result = _spanish(runner, "/tokens\n/model\n")
+
+    assert "contexto: " in result.stderr
+    assert " / 128,000 tokens (" in result.stderr
+    assert "proveedor fake (default), modelo fake-model (default)" in result.stderr
+    assert fake_provider.requests == []
+
+
+def test_model_in_spanish_names_a_switch_made_in_the_session(runner, monkeypatch):
+    two_providers(monkeypatch)
+    result = _spanish(runner, "/model ollama\n/model\n")
+
+    assert (
+        "proveedor ollama (definido en esta sesión con /model), "
+        "modelo qwen2.5-coder (definido en esta sesión con /model)"
+    ) in result.stderr
+
+
+def test_sessions_and_skills_in_spanish(runner, workdir, fake_provider):
+    result = _spanish(runner, "/sessions\n/skills\n")
+    assert "no hay sesiones guardadas" in result.stderr
+    assert "no se encontraron skills; se buscó en .nar/skills/ y en " in result.stderr
+
+    write_skill(workdir / ".nar" / "skills", "demo")
+    result = _spanish(runner, "/skills\n/skill demo\n/skill nope\n/skill\n")
+    assert "demo (project): Shows how skills work" in result.stderr
+    assert "El skill demo se usará con la próxima solicitud." in result.stderr
+    assert "error: no hay ningún skill llamado 'nope'; skills disponibles: demo" in result.stderr
+    assert "error: usa /skill <nombre> [solicitud]; skills disponibles: demo" in result.stderr
+
+
+def test_command_errors_in_spanish_keep_the_command_names(runner, workdir, fake_provider):
+    result = _spanish(runner, "/nope\n/approval x\n/approval\n/clear\n/checkpoint a\n/restore\n")
+
+    assert "error: /nope no es un comando; disponibles: /mcp, /compact," in result.stderr
+    assert "error: nivel de aprobación desconocido 'x'; usa ask, auto-edit, yolo" in result.stderr
+    assert "\napproval ask\n" in result.stderr
+    assert "conversación borrada: los mensajes anteriores ya no están" in result.stderr
+    assert "error: todavía no hay nada que guardar" in result.stderr
+    assert "error: usa /restore <id o nombre>; /checkpoints los lista" in result.stderr
+
+
+def test_models_in_spanish_counts_and_marks_the_one_in_use(runner, workdir, fake_provider):
+    result = _spanish(runner, "/models\n/models ollama fake\n/models ollama zzz\n")
+
+    assert "fake: 2 modelos" in result.stderr
+    assert "  fake-model  ← en uso" in result.stderr
+    assert "fake: coincide 1 de 2 modelos con 'fake'" in result.stderr
+    assert "fake: ningún modelo coincide con 'zzz' (2 modelos)" in result.stderr
+
+
+# --- REPL banner, runner and key messages (RRG-98, slice 3) ------------------------------------
+
+
+def test_banner_with_no_configuration_is_spanish_by_default(runner, workdir, fake_provider):
+    result = runner.invoke(main, [], interface=None, input="exit\n")
+
+    assert "nar · fake · fake-model. Escribe 'exit' para salir." in result.stdout
+    assert "Type 'exit'" not in result.stdout
+
+
+def test_banner_with_language_en_is_english(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["--language", "en"], input="exit\n")
+
+    assert "nar · fake · fake-model. Type 'exit' to leave." in result.stdout
+    assert "Escribe" not in result.stdout
+
+
+def test_agents_md_line_in_spanish(runner, workdir, fake_provider):
+    (workdir / "AGENTS.md").write_text("Be brief.", encoding="utf-8")
+    result = _spanish(runner, "")
+
+    assert f"Usando AGENTS.md: {(workdir / 'AGENTS.md').resolve()}" in result.output
+
+
+def test_the_prompt_stays_nar_in_both_languages(runner, workdir, fake_provider):
+    assert "nar> " in _spanish(runner, "").stdout
+    assert "nar> " in runner.invoke(main, [], input="exit\n").stdout
+
+
+def test_waiting_text_names_the_model_in_each_language(runner, workdir, fake_provider):
+    from nar.cli.runner import create_agent
+    from nar.config import NarConfig
+    from nar.i18n import set_language
+    from nar.ui.agent_view import AgentView
+
+    for language, expected in (
+        ("es", "esperando a fake-model..."),
+        ("en", "waiting for fake-model..."),
+    ):
+        set_language(language)
+        view = AgentView()
+        create_agent(NarConfig(), workdir, None, view)
+        assert view.waiting_text == expected
+
+
+def test_model_switch_messages_in_spanish(runner, monkeypatch):
+    two_providers(monkeypatch)
+    result = _spanish(runner, "/model ollama\n/model nope\n/model\n")
+
+    assert "comprobando ollama · qwen2.5-coder..." in result.stderr
+    assert "modelo: ollama · qwen2.5-coder" in result.stderr
+    assert "error: proveedor desconocido 'nope'; usa anthropic, openrouter, ollama, deepseek" in (
+        result.stderr
+    )
+
+
+def test_model_listing_and_session_messages_in_spanish(runner, workdir, fake_provider):
+    result = _spanish(runner, "/models\n")
+
+    assert "listando los modelos de fake..." in result.stderr
+
+
+def test_compacting_an_empty_conversation_says_so_in_spanish(runner, workdir, fake_provider):
+    result = _spanish(runner, "/compact\n")
+
+    assert "contexto: no hay nada que compactar" in result.stderr

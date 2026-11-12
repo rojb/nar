@@ -32,6 +32,7 @@ from nar.context.compaction import CompactionError, Compactor, ContextLimits
 from nar.context.manager import ContextManager
 from nar.errors import NarError, ProviderError
 from nar.hooks import HookRunner
+from nar.i18n import t
 from nar.mcp import McpManager
 from nar.providers import factory
 from nar.session import Session, SessionRecorder, SessionStore, sessions_dir
@@ -66,7 +67,7 @@ def create_agent(
     """
     prepare_api_key(config, KeyPrompter(view.err), view.note, view.warn)
     provider = factory.create_provider(config, on_retry=view.retry)
-    view.waiting_text = f"waiting for {provider.model}..."
+    view.waiting_text = t("runner.waiting", model=provider.model)
     skills = discover_skills(cwd, view.warn)
     context = ContextManager(
         build_system_prompt(
@@ -177,11 +178,23 @@ def continue_session(
     """Load ``session``; it goes on in this folder with the configured provider and model."""
     provider = agent.provider
     if session.cwd != str(cwd):
-        view.warn(f"warning: this session was started in {session.cwd}; tools run in {cwd}")
+        view.warn(
+            t(
+                "runner.session_other_cwd",
+                prefix=t("warning.prefix"),
+                session_cwd=session.cwd,
+                cwd=cwd,
+            )
+        )
     if (session.provider, session.model) != (provider.name, provider.model):
         view.note(
-            f"session used {session.provider} / {session.model}; "
-            f"continuing with {provider.name} / {provider.model}"
+            t(
+                "runner.session_other_provider",
+                old_provider=session.provider,
+                old_model=session.model,
+                provider=provider.name,
+                model=provider.model,
+            )
         )
     recorder.switch(replace(session, cwd=str(cwd), provider=provider.name, model=provider.model))
 
@@ -201,13 +214,15 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
     pending = obtain_api_key(config, prompter)  # in a terminal, a missing key is asked for
     try:
         provider = factory.create_provider(config, on_retry=view.retry)
-        view.note(f"checking {provider.name} · {provider.model}...")
+        view.note(t("runner.checking", provider=provider.name, model=provider.model))
         provider.check()  # Ctrl+C propagates to /model, which keeps the previous provider
     except ProviderError as exc:
         if pending is not None:
             pending.discard()
         current = agent.provider
-        raise NarError(f"{exc.message}; still using {current.name} · {current.model}") from exc
+        raise NarError(
+            t("runner.still_using", reason=exc.message, provider=current.name, model=current.model)
+        ) from exc
     except KeyboardInterrupt:
         if pending is not None:
             pending.discard()
@@ -221,8 +236,8 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
         limits = agent.compactor.limits
         if not limits.fixed:  # the new provider's window, unless the user set one (RRG-90)
             agent.compactor.limits = replace(limits, window=DEFAULT_CONTEXT_WINDOWS[provider_name])
-    view.waiting_text = f"waiting for {provider.model}..."
-    view.note(f"model: {provider.name} · {provider.model}")
+    view.waiting_text = t("runner.waiting", model=provider.model)
+    view.note(t("runner.model_now", provider=provider.name, model=provider.model))
 
 
 def list_models(agent: Agent, view: AgentView, spec: str) -> tuple[str, list[str]]:
@@ -232,7 +247,7 @@ def list_models(agent: Agent, view: AgentView, spec: str) -> tuple[str, list[str
         provider = factory.create_provider(NarConfig(provider=provider_name), on_retry=view.retry)
     else:
         provider = agent.provider
-    view.note(f"listing {provider.name} models...")
+    view.note(t("runner.listing_models", provider=provider.name))
     return provider.name, provider.list_models()
 
 
@@ -240,7 +255,7 @@ def _model_spec(spec: str) -> tuple[ProviderName, str | None]:
     """``ollama``, ``ollama/qwen2.5-coder`` or ``ollama qwen2.5-coder``."""
     text = spec.strip()
     if not text:
-        raise NarError("say which provider to switch to")
+        raise NarError(t("runner.say_provider"))
     if len(text.split(None, 1)) == 2:
         name, model = text.split(None, 1)
     elif "/" in text:
@@ -251,7 +266,7 @@ def _model_spec(spec: str) -> tuple[ProviderName, str | None]:
         provider = ProviderName(name.strip())
     except ValueError:
         allowed = ", ".join(option.value for option in ProviderName)
-        raise NarError(f"unknown provider '{name.strip()}'; use {allowed}") from None
+        raise NarError(t("runner.unknown_provider", name=name.strip(), allowed=allowed)) from None
     return provider, model.strip() or None
 
 
@@ -263,7 +278,7 @@ def show_context_usage(agent: Agent, view: AgentView) -> None:
 def compact_now(agent: Agent, view: AgentView, recorder: SessionRecorder | None = None) -> None:
     """``/compact``: any failure or Ctrl+C is shown, and the history stays as it was."""
     if not agent.context.messages:
-        view.note("context: there is nothing to compact")
+        view.note(t("runner.nothing_to_compact"))
         return
     before = agent.context.token_count()
     view.handle(CompactionStarted())
@@ -286,5 +301,5 @@ def _saved_memory(view: AgentView) -> dict[str, str]:
     try:
         return MemoryStore(memory_path()).load()
     except MemoryFileError as exc:
-        view.warn(f"warning: {exc.message}; starting without saved memory")
+        view.warn(t("runner.memory_warning", prefix=t("warning.prefix"), reason=exc.message))
         return {}

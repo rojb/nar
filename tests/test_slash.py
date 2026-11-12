@@ -161,7 +161,9 @@ def test_markup_like_text_is_printed_literally():
 def test_registered_commands_can_be_added_and_receive_their_argument(monkeypatch):
     monkeypatch.setattr(slash, "_COMMANDS", dict(slash._COMMANDS))
     seen = []
-    slash.register_command("echo", lambda context, argument: seen.append(argument), "echo")
+    slash.register_command(
+        "echo", lambda context, argument: seen.append(argument), "command.help.summary"
+    )
     context, _, err = make_context(None)
     assert slash.dispatch("/echo hello there", context) is True
     assert seen == ["hello there"]
@@ -313,14 +315,14 @@ def test_resume_with_a_bad_id_keeps_the_session(session_context, argument):
 def test_checkpoint_saves_and_shows_the_number_and_name(session_context):
     context, _, _, _ = session_context
     assert slash.dispatch("/checkpoint before refactor", context) is True
-    assert "checkpoint 1 saved: before refactor (1 messages)" in context.err.file.getvalue()
+    assert "checkpoint 1 saved: before refactor (1 message)" in context.err.file.getvalue()
     assert context.agent.provider.calls == 0
 
 
 def test_checkpoint_without_a_name(session_context):
     context, _, _, _ = session_context
     slash.dispatch("/checkpoint", context)
-    assert "checkpoint 1 saved (1 messages)" in context.err.file.getvalue()
+    assert "checkpoint 1 saved (1 message)" in context.err.file.getvalue()
 
 
 def test_checkpoint_of_an_empty_conversation_saves_nothing(session_context):
@@ -364,7 +366,7 @@ def test_restore_discards_later_messages_in_the_context_and_the_file(session_con
     assert conversation.messages == (Message.user("current"),)
     assert store.load("current").messages == (Message.user("current"),)
     shown = context.err.file.getvalue()
-    assert "restored checkpoint 1: the conversation now has 1 messages" in shown
+    assert "restored checkpoint 1: the conversation now has 1 message;" in shown
     assert "files changed by tools were not restored" in shown
     assert context.agent.provider.calls == 0
 
@@ -560,3 +562,41 @@ def test_clear_drops_the_pending_skill(tmp_path):
     slash.dispatch("/clear", context)
 
     assert context.pending_skill is None
+
+
+# --- Spanish (RRG-98) ----------------------------------------------------------------------------
+
+
+def test_checkpoint_and_restore_in_spanish_count_messages_in_the_singular_and_plural(
+    session_context,
+):
+    from nar.i18n import set_language
+
+    set_language("es")
+    context, _, conversation, _ = session_context
+    slash.dispatch("/checkpoint base", context)
+    conversation.add_user("later request")
+    slash.dispatch("/checkpoint", context)
+    slash.dispatch("/restore base", context)
+    shown = context.err.file.getvalue()
+    assert "punto de control 1 guardado: base (1 mensaje)" in shown
+    assert "punto de control 2 guardado (2 mensajes)" in shown
+    assert "punto de control 1 restaurado: la conversación ahora tiene 1 mensaje;" in shown
+    assert "los archivos que cambiaron las herramientas no se restauraron" in shown
+
+
+def test_resume_and_checkpoint_errors_in_spanish(session_context):
+    from nar.i18n import set_language
+
+    set_language("es")
+    context, _, conversation, project = session_context
+    slash.dispatch("/resume", context)
+    slash.dispatch("/restore", context)
+    slash.dispatch("/compact now", context)
+    conversation.replace_messages(())
+    slash.dispatch("/checkpoint", context)
+    shown = context.err.file.getvalue()
+    assert f"error: no hay otra sesión guardada en {project}" in shown
+    assert "error: usa /restore <id o nombre>; /checkpoints los lista" in shown
+    assert "error: /compact no admite argumentos" in shown
+    assert "error: todavía no hay nada que guardar" in shown

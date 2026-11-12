@@ -122,6 +122,13 @@ standard error, so a redirected run keeps only the answer.
   everything else behaves the same, so `printf '/help\nexit\n' | nar` works.
 - **`/clear` says so**: the earlier messages are gone from the conversation and from the session
   file, and the next request starts from the system prompt alone.
+- **Commands follow the interface language.** The summaries in `/help` and in the completion list,
+  and the sentences the commands print, are in Spanish by default and in English with
+  `--language en` (see "Interface language"). Only the texts change: the command names
+  (`/help`, `/model`, ...), `exit`, the setting names and values, provider and model names, paths
+  and the `nar> ` prompt are the same in both languages. `/tools` prints each tool's description
+  as the model reads it, so it stays English, and `/config` keeps its setting names, values and
+  sources; the words for those sources are translated with the configuration errors.
 
 ## Configuration
 
@@ -196,7 +203,8 @@ run. Texts live in one catalog, `src/nar/i18n/`, with the same keys in Spanish a
 
 > The catalog is being introduced in steps. The prompts (tool approval, trust for `.nar/tools/`,
 > saving an API key, the provider menu) and the tool, agent, session and MCP views are already in
-> it; the commands, errors and `--help` are still English and move in the next changes.
+> it, and so are the slash commands, the banner and the runner messages; the errors and
+> warnings of the other modules and `--help` are still English and move in the next changes.
 
 Prompt questions accept the same answers in both languages, whatever the interface language is:
 yes is `y`, `yes`, `s`, `si` or `sí`; no is `n` or `no`; always is `a`, `always` or `siempre`.
