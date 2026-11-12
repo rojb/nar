@@ -6,6 +6,7 @@ import pytest
 
 from nar import i18n
 from nar.i18n import UnknownMessageKey, current_language, messages_en, messages_es, set_language, t
+from nar.i18n.answers import Answer, parse_answer
 
 # --- t / set_language ---------------------------------------------------------------------
 
@@ -102,3 +103,41 @@ def test_parity_check_reports_a_different_placeholder():
     problems = parity_problems({"a": "{count} archivos"}, {"a": "{n} files"})
 
     assert problems == ["a: placeholders differ"]
+
+
+# --- prompt answers -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        *[(word, Answer.YES) for word in ("y", "yes", "s", "si", "sí")],
+        *[(word, Answer.NO) for word in ("n", "no")],
+        *[(word, Answer.ALWAYS) for word in ("a", "always", "siempre")],
+        ("SÍ", Answer.YES),
+        ("Si", Answer.YES),
+        ("YES", Answer.YES),
+        ("  y\n", Answer.YES),
+        ("NO", Answer.NO),
+        (" Siempre ", Answer.ALWAYS),
+        ("ALWAYS", Answer.ALWAYS),
+        # an accent made of a base letter plus a combining mark counts too
+        ("si\u0301", Answer.YES),
+    ],
+)
+def test_parse_answer_accepts_both_languages_ignoring_case_and_accents(text, expected):
+    assert parse_answer(text) is expected
+
+
+@pytest.mark.parametrize("text", ["", "   ", "quizás", "maybe", "yess", "ye", "sí.", "nope", "y n"])
+def test_parse_answer_rejects_anything_else(text):
+    assert parse_answer(text) is None
+
+
+def test_parse_answer_does_not_depend_on_the_interface_language():
+    for language in ("es", "en"):
+        set_language(language)
+
+        assert parse_answer("yes") is Answer.YES
+        assert parse_answer("sí") is Answer.YES
+        assert parse_answer("siempre") is Answer.ALWAYS
