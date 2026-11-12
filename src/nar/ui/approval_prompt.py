@@ -13,18 +13,19 @@ from typing import TextIO
 from rich.text import Text
 
 from nar.agent.approval import ApprovalAnswer, ApprovalDecision, ApprovalRequest
+from nar.i18n import t, tn
+from nar.i18n.answers import Answer, parse_answer
 from nar.ui.tool_view import ToolRenderer
 
 MAX_DETAIL_LINES = 60
 MAX_DIFF_LINES = 100
 
-_YES = {"y", "yes"}
-_NO = {"n", "no"}
-_ALWAYS = {"a", "always"}
-
 
 class TerminalPrompter:
     """Shows a preview and reads ``y``, ``n`` or ``a`` followed by Enter.
+
+    The question follows the interface language; the answers (``y``/``s``/``sí``, ``n``,
+    ``a``/``siempre``, any case) are accepted in both languages.
 
     A single-keypress prompt would need separate Windows and POSIX code and could
     not be driven by piped input in tests, so the user types the letter and Enter.
@@ -54,28 +55,28 @@ class TerminalPrompter:
     def ask(self, request: ApprovalRequest) -> ApprovalAnswer:
         self._show(request)
         tool = request.tool_name
-        question = f"Allow {tool}? [y]es / [n]o / [a]lways allow {tool} this session: "
+        question = t("approval.question", tool=tool)
         while True:
             self._console.print(Text(question), end="", highlight=False)
             try:
-                answer = self._read().strip().lower()
+                answer = parse_answer(self._read())
             except EOFError:
                 self._console.print()
                 return ApprovalAnswer(ApprovalDecision.REJECT)
-            if answer in _YES:
+            if answer is Answer.YES:
                 return ApprovalAnswer(ApprovalDecision.APPROVE)
-            if answer in _ALWAYS:
-                self._renderer.show_detail(f"{tool} will not ask again in this session")
+            if answer is Answer.ALWAYS:
+                self._renderer.show_detail(t("approval.session_noted", tool=tool))
                 return ApprovalAnswer(ApprovalDecision.APPROVE_SESSION)
-            if answer in _NO:
+            if answer is Answer.NO:
                 return ApprovalAnswer(ApprovalDecision.REJECT, self._ask_reason())
-            self._renderer.show_detail("Please answer y, n or a.")
+            self._renderer.show_detail(t("approval.invalid"))
 
     def _read(self) -> str:
         return (self._read_line or input)("")
 
     def _ask_reason(self) -> str | None:
-        self._console.print(Text("Reason (optional, Enter to skip): "), end="", highlight=False)
+        self._console.print(Text(t("approval.reason")), end="", highlight=False)
         try:
             reason = self._read().strip()
         except EOFError:
@@ -86,7 +87,7 @@ class TerminalPrompter:
     def _show(self, request: ApprovalRequest) -> None:
         preview = request.preview
         shortened = False
-        self._renderer.show_detail(f"Approval needed: {preview.title}", style="bold")
+        self._renderer.show_detail(t("approval.needed", title=preview.title), style="bold")
         if preview.detail:
             lines, cut = _limit(preview.detail, MAX_DETAIL_LINES)
             self._renderer.show_detail(lines)
@@ -96,11 +97,11 @@ class TerminalPrompter:
             self._renderer.show_diff(lines)
             shortened = self._note_cut(cut) or shortened
         if shortened:
-            self._renderer.show_detail("(preview shortened)")
+            self._renderer.show_detail(t("approval.shortened"))
 
     def _note_cut(self, omitted: int) -> bool:
         if omitted:
-            self._renderer.show_detail(f"... {omitted} more lines not shown")
+            self._renderer.show_detail(tn("approval.more_lines", omitted))
         return omitted > 0
 
 

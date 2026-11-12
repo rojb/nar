@@ -10,6 +10,7 @@ from typing import TextIO
 from rich.console import Console
 from rich.text import Text
 
+from nar.i18n import t
 from nar.ui.approval_prompt import _is_terminal
 
 
@@ -17,7 +18,7 @@ from nar.ui.approval_prompt import _is_terminal
 class ProviderOption:
     name: str
     model: str
-    status: str  # "key set", "no key: it will ask for one" or "local, no key"
+    status: str  # already in the interface language, e.g. "key set" or "local, no key"
 
 
 class ProviderMenu:
@@ -39,14 +40,14 @@ class ProviderMenu:
 
     def choose(self, failed: str, options: Sequence[ProviderOption]) -> str | None:
         """The picked provider's name, or ``None`` to stay (Enter, end of input, Ctrl+C)."""
-        self._print(f"{failed} can't answer. Continue with another provider?", "yellow")
+        self._print(t("menu.cant_answer", failed=failed), "yellow")
         width = max(len(option.name) for option in options)
         for number, option in enumerate(options, 1):
             self._print(f"  {number}. {option.name:<{width}}  · {option.model}  ({option.status})")
-        self._print(f"  Enter: stay on {failed}")
+        self._print(f"  {t('menu.stay', failed=failed)}")
         read = self._read_line or input
         while True:
-            self._console.print(Text(f"Choose 1-{len(options)}: "), end="", highlight=False)
+            self._console.print(Text(t("menu.choose", count=len(options))), end="", highlight=False)
             try:
                 answer = read("").strip()
             except (EOFError, KeyboardInterrupt):

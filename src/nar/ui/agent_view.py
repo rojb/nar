@@ -24,21 +24,50 @@ from nar.agent.events import (
     ToolCallStarted,
     TurnLimitReached,
 )
-from nar.agent.loops import LoopKind, count_text
+from nar.agent.loops import LoopKind
+from nar.i18n import t, tn
 from nar.providers.messages import TextDelta
 from nar.providers.retry import RetryNotice
 from nar.ui.tool_view import ToolRenderer
 
 
-def _looped(event: LoopDetected | LoopAborted, *, past: bool) -> str:
-    """The repeated calls, as a phrase: ``repeated read_file ...`` or ``alternated ...``."""
+def _times(count: int) -> str:
+    """``twice``, ``three times``, ... up to six; a bigger count is written with digits."""
+    if 2 <= count <= 6:
+        return t(f"agent.times.{count}")
+    return t("agent.times.other", count=count)
+
+
+def _detected(event: LoopDetected) -> str:
+    """The warning shown when the agent loops for the first time."""
+    prefix = t("warning.prefix")
     if event.kind is LoopKind.OSCILLATION:
-        verb = "alternated" if past else "alternating"
-        return f"{verb} between the same calls ({event.call.name})"
-    verb = "repeated" if past else "repeating"
-    if past:
-        return f"{verb} {event.call.name} with the same arguments {count_text(event.count)}"
-    return f"{verb} {event.call.name}"
+        return t("agent.loop.alternate_detected", prefix=prefix, tool=event.call.name)
+    times = _times(event.count)
+    return t("agent.loop.repeat_detected", prefix=prefix, tool=event.call.name, times=times)
+
+
+def _aborted(event: LoopAborted) -> str:
+    """The line shown when the agent kept looping after the warning."""
+    key = "alternate" if event.kind is LoopKind.OSCILLATION else "repeat"
+    return t(f"agent.loop.{key}_aborted", tool=event.call.name)
+
+
+def _pruned(event: ContextPruned) -> str:
+    """The context line for removed and/or shortened tool results, plural-aware as a whole."""
+    values = {
+        "removed": event.count,
+        "shortened": event.shortened,
+        "before": f"{event.tokens_before:,}",
+        "after": f"{event.tokens_after:,}",
+    }
+    removed = "one" if event.count == 1 else "other"
+    shortened = "one" if event.shortened == 1 else "other"
+    if event.count and event.shortened:
+        return t(f"agent.context.both.{removed}_{shortened}", **values)
+    if event.count:
+        return t(f"agent.context.removed.{removed}", **values)
+    return t(f"agent.context.shortened.{shortened}", **values)
 
 
 class SubagentLine:
@@ -48,7 +77,7 @@ class SubagentLine:
         self._view = view
 
     def update(self, kind: str, tool_calls: int) -> None:
-        self._view.show_progress(f"{kind}: {tool_calls} tool calls...")
+        self._view.show_progress(tn("agent.subagent_progress", tool_calls, kind=kind))
 
     def pause(self) -> None:
         self._view.finish()
@@ -59,17 +88,17 @@ class AgentView:
         self.out = out or Console()
         self.err = err or Console(stderr=True)
         self.tools = ToolRenderer(self.err)
-        self.waiting_text = "waiting for the model..."
+        self.waiting_text: str | None = None  # None: the default text, in the active language
         self._status: Status | None = None
         self._line_open = False  # answer text printed without a final newline
 
     def handle(self, event: AgentEvent) -> None:
         if isinstance(event, ModelCallStarted):
-            self._start_waiting(self.waiting_text)
+            self._start_waiting(self.waiting_text or t("agent.waiting_model"))
             return
         if isinstance(event, CompactionStarted):
             self._close_line()
-            self._start_waiting("compacting the conversation...")
+            self._start_waiting(t("agent.compacting"))
             return
         self._stop_waiting()
         if isinstance(event, TextDelta):
@@ -82,41 +111,25 @@ class AgentView:
             self.tools.show_result(event.call.name, event.result)
         elif isinstance(event, AnswerCutOff):
             self._close_line()
-            self.warn(
-                f"warning: the answer was cut off: {event.model} reached the output token limit"
-            )
+            self.warn(t("agent.cut_off", prefix=t("warning.prefix"), model=event.model))
         elif isinstance(event, TurnLimitReached):
             self._close_line()
-            self.warn(
-                f"stopped after {event.max_turns} turns without a final answer; "
-                "raise max_turns in .nar/config.toml to allow more"
-            )
+            self.warn(t("agent.turn_limit", max_turns=event.max_turns))
         elif isinstance(event, LoopDetected):
             self._close_line()
-            self.warn(
-                f"warning: the agent {_looped(event, past=True)}; asked it to change strategy"
-            )
+            self.warn(_detected(event))
         elif isinstance(event, LoopAborted):
             self._close_line()
-            self.warn(f"stopped: the agent kept {_looped(event, past=False)} after the warning")
+            self.warn(_aborted(event))
         elif isinstance(event, ContextPruned):
             self._close_line()
-            done = [f"removed {event.count} old tool results"] if event.count else []
-            if event.shortened:
-                done.append(f"shortened {event.shortened} new tool results")
-            self.note(
-                f"context: {' and '.join(done)} "
-                f"({event.tokens_before:,} -> {event.tokens_after:,} tokens)"
-            )
+            self.note(_pruned(event))
         elif isinstance(event, ContextCompacted):
             self._close_line()
             self.compacted(event.tokens_before, event.tokens_after)
         elif isinstance(event, CompactionFailed):
             self._close_line()
-            self.warn(
-                f"warning: could not compact the conversation: {event.reason}; "
-                "continuing with the full history"
-            )
+            self.warn(t("agent.compaction_failed", prefix=t("warning.prefix"), reason=event.reason))
 
     def finish(self) -> None:
         """End the request's output: stop the spinner and end the answer line."""
@@ -140,15 +153,24 @@ class AgentView:
 
     def cancelled(self) -> None:
         self.finish()
-        self.err.print("[yellow]cancelled[/yellow]", highlight=False)
+        self.err.print(f"[yellow]{escape(t('agent.cancelled'))}[/yellow]", highlight=False)
 
     def compacted(self, tokens_before: int, tokens_after: int) -> None:
-        self.note(f"context: compacted ({tokens_before:,} -> {tokens_after:,} tokens)")
+        self.note(
+            t("agent.context.compacted", before=f"{tokens_before:,}", after=f"{tokens_after:,}")
+        )
 
     def context_usage(self, tokens: int, window: int) -> None:
         """How full the context is, as one dim line on standard error."""
         self.finish()
-        self.note(f"context: {tokens:,} / {window:,} tokens ({tokens * 100 // window}%)")
+        self.note(
+            t(
+                "agent.context.usage",
+                tokens=f"{tokens:,}",
+                window=f"{window:,}",
+                percent=tokens * 100 // window,
+            )
+        )
 
     @property
     def subagents(self) -> SubagentLine:

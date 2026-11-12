@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from nar.config import DEFAULT_MODELS, ProviderName
 from nar.errors import NarError, ProviderError
+from nar.i18n import t
 from nar.providers import factory
 from nar.ui.provider_menu import ProviderOption
 
@@ -34,11 +35,11 @@ def provider_options(exclude: set[str]) -> list[ProviderOption]:
             continue
         env = factory.API_KEY_ENVS.get(name)
         if env is None:
-            status = "local, no key"
+            status = t("provider.status.local")
         elif os.environ.get(env, "").strip():
-            status = "key set"
+            status = t("provider.status.key_set")
         else:
-            status = "no key: it will ask for one"
+            status = t("provider.status.no_key")
         options.append(ProviderOption(name.value, DEFAULT_MODELS[name], status))
     return options
 

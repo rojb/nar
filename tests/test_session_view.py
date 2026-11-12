@@ -70,7 +70,7 @@ def test_sessions_list_has_the_details_and_the_mark():
     render_sessions([session(1), session(2)], "id-2", 0, out, err)
     first, second = buffer.getvalue().splitlines()
     assert first.startswith("  id-1  2026-11-0")
-    assert "1 messages  /project  hello" in first
+    assert "1 message  /project  hello" in first
     assert second.startswith("* id-2")
     assert err_buffer.getvalue() == ""
 
@@ -101,8 +101,8 @@ def test_checkpoints_list_in_order_with_details():
     )
     first, second = buffer.getvalue().splitlines()
     assert first.startswith("1  2026-11-0")
-    assert first.endswith("1 messages  [red]base[/red]")
-    assert second.endswith("1 messages")
+    assert first.endswith("1 message  [red]base[/red]")
+    assert second.endswith("1 message")
 
 
 def test_no_checkpoints_says_so():

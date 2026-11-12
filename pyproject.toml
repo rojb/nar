@@ -43,5 +43,9 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# Catalog texts are whole sentences; they are not wrapped.
+"src/nar/i18n/messages_*.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -194,13 +194,24 @@ The same `language` setting (`es` by default, or `en`) is the language of `nar`'
 fixed once per run, right after the configuration is loaded, so `--language en` changes it for one
 run. Texts live in one catalog, `src/nar/i18n/`, with the same keys in Spanish and English.
 
-> The catalog is being introduced in steps. Right now it holds only a few texts, and most of
-> `nar`'s messages are still English; the next changes move the prompts, commands, errors and
-> `--help` into it.
+> The catalog is being introduced in steps. The prompts (tool approval, trust for `.nar/tools/`,
+> saving an API key, the provider menu) and the tool, agent, session and MCP views are already in
+> it; the commands, errors and `--help` are still English and move in the next changes.
 
 Prompt questions accept the same answers in both languages, whatever the interface language is:
 yes is `y`, `yes`, `s`, `si` or `sí`; no is `n` or `no`; always is `a`, `always` or `siempre`.
 Letter case and accents do not matter. The code for this is `nar.i18n.answers.parse_answer`.
+
+| Question | Spanish text | Answers it accepts |
+|---|---|---|
+| Tool approval | `¿Permitir shell? [s]í / [n]o / [a] siempre shell en esta sesión:` | yes, no, always |
+| Trust for `.nar/tools/` | `¿Ejecutar estos archivos? [s]í / [n]o:` | yes, no |
+| Save an API key | `¿Guardar ANTHROPIC_API_KEY para tu usuario, para la próxima vez? [s]í / [n]o:` | yes, no |
+
+So `YES` answers the Spanish approval question and `sí`, `SI` or `siempre` answer the English one.
+Any other answer (`quizás`, an empty line) asks again, except at the trust and key questions,
+where end of input and Ctrl+C count as no, as before. The trust and key questions do not accept
+`always`: it asks again.
 
 To add a text:
 
@@ -248,8 +259,11 @@ Approval needed: Edit hello.txt (+1 -1)
 Allow edit_file? [y]es / [n]o / [a]lways allow edit_file this session:
 ```
 
-Type a letter and press Enter (`yes`, `no` and `always` also work; an empty or unknown answer
-asks again, so a stray Enter never approves).
+Type a letter and press Enter (`yes`, `no` and `always` also work, and so do the Spanish `s`,
+`sí`, `si` and `siempre`; an empty or unknown answer asks again, so a stray Enter never approves).
+With `language = "es"` (the default) the question reads
+`¿Permitir edit_file? [s]í / [n]o / [a] siempre edit_file en esta sesión:`. The result sent to
+the model when you reject a call, or when `nar` cannot ask, stays English in both languages.
 
 - `y` runs this call.
 - `n` rejects it. `nar` then asks for an optional reason (Enter to skip). The model is told the

@@ -141,3 +141,21 @@ def test_parse_answer_does_not_depend_on_the_interface_language():
         assert parse_answer("yes") is Answer.YES
         assert parse_answer("sí") is Answer.YES
         assert parse_answer("siempre") is Answer.ALWAYS
+
+
+# --- tn -----------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("language", "count", "expected"),
+    [
+        ("es", 1, "... 1 línea más sin mostrar"),
+        ("es", 3, "... 3 líneas más sin mostrar"),
+        ("en", 1, "... 1 more line not shown"),
+        ("en", 0, "... 0 more lines not shown"),
+    ],
+)
+def test_tn_picks_the_one_or_other_key_by_count(language, count, expected):
+    set_language(language)
+
+    assert i18n.tn("approval.more_lines", count) == expected

@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.text import Text
 
+from nar.i18n import t
 from nar.tools.base import ToolResult
 
 MAX_ARGUMENTS_LENGTH = 100
@@ -100,4 +101,4 @@ def _display_style(line: str) -> str:
 
 
 def _describe(output: str) -> str:
-    return f"{len(output.splitlines())} lines, {len(output)} chars"
+    return t("tool.summary.counts", lines=len(output.splitlines()), chars=len(output))

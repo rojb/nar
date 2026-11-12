@@ -24,10 +24,19 @@ cli_module = importlib.import_module("nar.cli.main")
 class _Runner(CliRunner):
     """Invoke `nar.cli.main` (a plain function, not a Click command) under CliRunner."""
 
-    def invoke(self, _main, args=None, **kwargs):  # noqa: D102
+    def invoke(self, _main, args=None, *, interface="en", **kwargs):  # noqa: D102
+        """Run ``main`` with ``--language <interface>`` unless the test passes its own.
+
+        The default interface language is Spanish, so most of these tests (which read the English
+        text) pin ``en``. A test about the default passes ``interface=None``.
+        """
+        arguments = list(args or [])
+        if interface and "--language" not in arguments:
+            arguments = ["--language", interface, *arguments]
+
         @click.command(add_help_option=False)
         def wrapper():
-            _main(list(args or []))
+            _main(arguments)
 
         return super().invoke(wrapper, [], **kwargs)
 
@@ -234,7 +243,7 @@ def workdir(tmp_path, monkeypatch):
 
 
 def test_show_config_defaults(runner, workdir):
-    result = runner.invoke(main, ["--show-config"])
+    result = runner.invoke(main, ["--show-config"], interface=None)
     assert result.exit_code == 0
     assert "provider = openrouter  (default)" in result.output
     assert "model = openrouter/auto  (default)" in result.output
@@ -245,7 +254,7 @@ def test_show_config_defaults(runner, workdir):
 def test_show_config_project_value_and_source(runner, workdir):
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('model = "b"\n', encoding="utf-8")
-    result = runner.invoke(main, ["--show-config"])
+    result = runner.invoke(main, ["--show-config"], interface=None)
     assert result.exit_code == 0
     assert "model = b  (.nar/config.toml)" in result.output
 
@@ -1010,11 +1019,13 @@ def test_language_flag_beats_the_project_file(runner, workdir):
 
 
 def test_without_the_flag_language_comes_from_the_file_or_the_default(runner, workdir):
-    assert "language = es  (default)" in runner.invoke(main, ["--show-config"]).output
+    assert (
+        "language = es  (default)" in runner.invoke(main, ["--show-config"], interface=None).output
+    )
 
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
-    result = runner.invoke(main, ["--show-config"])
+    result = runner.invoke(main, ["--show-config"], interface=None)
 
     assert "language = en  (.nar/config.toml)" in result.output
 
@@ -1031,7 +1042,7 @@ def test_invalid_language_in_a_file_exits_one_with_one_line(runner, workdir):
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('language = "fr"\n', encoding="utf-8")
 
-    result = runner.invoke(main, [])
+    result = runner.invoke(main, [], interface=None)
 
     assert result.exit_code == 1
     assert result.stderr.startswith("error: ")
@@ -1049,13 +1060,13 @@ def test_active_interface_language_follows_the_language_option(runner, workdir):
 
 
 def test_active_interface_language_follows_the_file_and_defaults_to_spanish(runner, workdir):
-    runner.invoke(main, ["--show-config"])
+    runner.invoke(main, ["--show-config"], interface=None)
     assert i18n.current_language() == "es"
 
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
     i18n.set_language("es")
-    runner.invoke(main, ["--show-config"])
+    runner.invoke(main, ["--show-config"], interface=None)
     assert i18n.current_language() == "en"
 
 
@@ -1977,7 +1988,7 @@ def test_skills_are_listed_in_the_system_prompt_and_the_tool_is_registered(
 def test_without_configuration_the_model_is_told_to_reply_in_spanish(
     runner, workdir, fake_provider
 ):
-    result = runner.invoke(main, ["what does README.md say?"])
+    result = runner.invoke(main, ["what does README.md say?"], interface=None)
 
     assert result.exit_code == 0
     assert "Always reply to the user in Spanish" in fake_provider.system

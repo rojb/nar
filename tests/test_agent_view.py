@@ -158,8 +158,8 @@ def test_context_events_go_to_stderr_only():
 def test_shortened_results_are_shown():
     view, _, err = make_view()
     play(view, ContextPruned(0, 5000, 2000, shortened=1), ContextPruned(2, 9, 8, shortened=1))
-    assert "context: shortened 1 new tool results (5,000 -> 2,000 tokens)" in err.getvalue()
-    assert "removed 2 old tool results and shortened 1 new tool results" in err.getvalue()
+    assert "context: shortened 1 new tool result (5,000 -> 2,000 tokens)" in err.getvalue()
+    assert "removed 2 old tool results and shortened 1 new tool result" in err.getvalue()
 
 
 def test_context_events_end_an_open_answer_line():
@@ -238,7 +238,7 @@ def test_subagent_progress_is_one_updating_line_on_stderr():
         Console(file=err, force_terminal=True, width=80),
     )
     view.subagents.update("explorer", 1)
-    assert "explorer: 1 tool calls" in view._status.status
+    assert "explorer: 1 tool call..." in view._status.status
     first = view._status
     view.subagents.update("explorer", 2)
     assert view._status is first
