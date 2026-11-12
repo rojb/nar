@@ -5,8 +5,8 @@ import pytest
 from nar.agent.approval import ApprovalAnswer, ApprovalDecision, approval_gate
 from nar.agent.events import ToolCallFinished
 from nar.agent.loop import Agent
-from nar.agent.subagent import TaskTool
-from nar.config.models import ApprovalLevel, HookEvent
+from nar.agent.subagent import SUBAGENT_TYPES, TaskTool
+from nar.config.models import ApprovalLevel, HookEvent, Language
 from nar.context.compaction import Compactor, ContextLimits
 from nar.context.instructions import ProjectInstructions
 from nar.context.manager import ContextManager
@@ -129,6 +129,31 @@ def test_a_subagent_sees_only_its_prompt(tmp_path):
     assert "main conversation" not in request["system"]
     assert "You are the main agent" not in request["system"]
     assert "read-only explorer" in request["system"]
+
+
+def test_a_subagent_is_told_to_reply_in_spanish_by_default(tmp_path):
+    provider = ScriptedProvider(LLMResponse("the summary"))
+    parent, _, _ = make_parent(tmp_path, provider)
+    run_task(parent)
+    assert "Always reply to the user in Spanish" in provider.requests[0]["system"]
+
+
+def test_a_subagent_is_told_to_reply_in_the_configured_language(tmp_path):
+    provider = ScriptedProvider(LLMResponse("the summary"))
+    parent, tool, _ = make_parent(tmp_path, provider)
+    tool.language = Language.EN
+    run_task(parent)
+    system = provider.requests[0]["system"]
+    assert "Always reply to the user in English" in system
+    assert "Spanish" not in system
+
+
+def test_a_subagent_summarizes_in_the_language_of_the_main_agent(tmp_path):
+    provider = ScriptedProvider()
+    parent, tool, _ = make_parent(tmp_path, provider)
+    parent.compactor.language = Language.EN
+    agent = tool._subagent(SUBAGENT_TYPES["explorer"], ContextManager("system"))
+    assert agent.compactor.language is Language.EN
 
 
 def test_a_subagent_gets_the_project_instructions(tmp_path):

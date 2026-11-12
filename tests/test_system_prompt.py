@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from nar.agent.prompt import build_subagent_prompt, build_system_prompt
+from nar.config import Language
 from nar.context import ProjectInstructions
 from nar.skills import Skill, parse_skill
 
@@ -92,6 +93,39 @@ def test_subagent_prompt_leaves_out_memory_and_the_main_guidelines():
     assert "Memory" not in text
     assert "todos" not in text
     assert "task tool" not in text
+
+
+def test_the_reply_language_is_spanish_by_default():
+    prompt = build()
+    assert "# Language\nAlways reply to the user in Spanish" in prompt
+    assert "English" not in prompt.split("# Language")[1].split("# ")[0]
+
+
+def test_the_reply_language_can_be_english():
+    prompt = build_system_prompt(CWD, language=Language.EN)
+    assert "# Language\nAlways reply to the user in English" in prompt
+    assert "Spanish" not in prompt.split("# Language")[1].split("# ")[0]
+
+
+def test_the_language_rule_keeps_code_paths_commands_and_quotes_unchanged():
+    text = " ".join(build().split())
+    for kept in ("code", "identifiers", "file names", "paths", "commands", "tool arguments"):
+        assert kept in text.split("Always reply to the user")[1]
+    assert "quoted text unchanged" in text
+
+
+def test_the_language_section_comes_before_memory_and_project_instructions():
+    instructions = ProjectInstructions(CWD / "AGENTS.md", "Use tabs", truncated=False)
+    prompt = build(instructions, {"editor": "vim"})
+    assert prompt.index("# Environment") < prompt.index("# Language")
+    assert prompt.index("# Language") < prompt.index("# Memory") < prompt.index("Use tabs")
+
+
+def test_the_subagent_prompt_carries_the_same_language_rule():
+    assert "Always reply to the user in Spanish" in subagent()
+    english = build_subagent_prompt("THE ROLE", CWD, language=Language.EN)
+    assert "# Language\nAlways reply to the user in English" in english
+    assert "Spanish" not in english
 
 
 def demo_skills():

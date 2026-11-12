@@ -1955,6 +1955,32 @@ def test_skills_are_listed_in_the_system_prompt_and_the_tool_is_registered(
     assert "skill" in fake_provider.tool_names
 
 
+def test_without_configuration_the_model_is_told_to_reply_in_spanish(
+    runner, workdir, fake_provider
+):
+    result = runner.invoke(main, ["what does README.md say?"])
+
+    assert result.exit_code == 0
+    assert "Always reply to the user in Spanish" in fake_provider.system
+
+
+def test_language_flag_tells_the_model_to_reply_in_english(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["--language", "en", "hola"])
+
+    assert result.exit_code == 0
+    assert "Always reply to the user in English" in fake_provider.system
+    assert "Spanish" not in fake_provider.system
+
+
+def test_language_from_the_project_file_reaches_the_system_prompt(runner, workdir, fake_provider):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
+
+    runner.invoke(main, ["hola"])
+
+    assert "Always reply to the user in English" in fake_provider.system
+
+
 def test_without_skills_there_is_no_section_no_tool_and_no_warning(runner, workdir, fake_provider):
     result = runner.invoke(main, ["hola"])
 

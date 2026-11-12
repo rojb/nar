@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
 
+from nar.config.models import Language
 from nar.context.instructions import ProjectInstructions
 from nar.skills import Skill
 
@@ -45,11 +46,21 @@ def build_system_prompt(
     memory: Mapping[str, str] | None = None,
     skills: Sequence[Skill] = (),
     *,
+    language: Language = Language.ES,
     platform_name: str | None = None,
     today: date | None = None,
 ) -> str:
-    """Identity, guidelines, environment, then memory, ``AGENTS.md`` and skills when present."""
-    sections = [IDENTITY, GUIDELINES, _environment(cwd, platform_name, today)]
+    """Identity, guidelines, environment and reply language, then memory, ``AGENTS.md`` and skills.
+
+    Memory, ``AGENTS.md`` and skills come last and only when present, so project instructions
+    can refine the language rule.
+    """
+    sections = [
+        IDENTITY,
+        GUIDELINES,
+        _environment(cwd, platform_name, today),
+        language_section(language),
+    ]
     if memory:
         facts = "\n".join(f"- {key}: {value}" for key, value in memory.items())
         sections.append(f"# Memory (saved in earlier sessions)\n{facts}")
@@ -65,18 +76,32 @@ def build_subagent_prompt(
     cwd: Path,
     instructions: ProjectInstructions | None = None,
     *,
+    language: Language = Language.ES,
     platform_name: str | None = None,
     today: date | None = None,
 ) -> str:
-    """Identity, role, environment and ``AGENTS.md``.
+    """Identity, role, environment, reply language and ``AGENTS.md``.
 
     Saved memory is about the user and the conversation, which a subagent does not have, and the
     main guidelines mention tools it may not have.
     """
-    sections = [IDENTITY, role, _environment(cwd, platform_name, today)]
+    sections = [IDENTITY, role, _environment(cwd, platform_name, today), language_section(language)]
     if instructions is not None:
         sections.append(_project_instructions(instructions))
     return "\n\n".join(sections)
+
+
+def language_instruction(language: Language) -> str:
+    """The rule for the language of the replies, shared by every prompt that carries it."""
+    return (
+        f"Always reply to the user in {language.label}, whatever language the user writes in or "
+        "the files are in. Keep code, identifiers, file names, paths, commands, tool arguments "
+        "and quoted text unchanged."
+    )
+
+
+def language_section(language: Language) -> str:
+    return f"# Language\n{language_instruction(language)}"
 
 
 def _environment(cwd: Path, platform_name: str | None, today: date | None) -> str:
