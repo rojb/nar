@@ -1138,7 +1138,7 @@ def test_single_mode_asks_on_the_terminal_and_runs_the_approved_call(
     assert result.exit_code == 0
     assert (workdir / "a.txt").read_bytes() == b"hi\n"
     assert result.stdout == "Created.\n"
-    assert "Approval needed: Create a.txt (1 lines)" in result.stderr
+    assert "Approval needed: Create a.txt (1 line)" in result.stderr
     assert "Allow write_file?" in result.stderr
     assert "Approval needed" not in result.stdout
 

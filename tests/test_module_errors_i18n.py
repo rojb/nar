@@ -440,3 +440,143 @@ def test_retry_notice_is_spanish_and_its_reason_stays_available_in_english():
         f"retrying openrouter in {notices[0].delay:.1f}s (server error 503, attempt 2/4)"
     )
     assert isinstance(notices[0], RetryNotice)
+
+
+# --- preview titles and summaries of edit_file, write_file and shell (4.4) -----------------------
+
+
+def _in_both_languages(call):
+    """The value ``call()`` gives in Spanish and then in English."""
+    set_language("es")
+    spanish = call()
+    set_language("en")
+    return spanish, call()
+
+
+def test_edit_file_title_and_summary_are_spanish_and_the_model_result_is_not(tmp_path):
+    from nar.tools import ToolContext
+    from nar.tools.edit_file import EditFileTool
+
+    (tmp_path / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+    context = ToolContext(cwd=tmp_path)
+    arguments = {"path": "a.py", "old_string": "two", "new_string": "2"}
+    tool = EditFileTool()
+
+    set_language("es")
+    assert tool.preview(arguments, context).title == "Editar a.py (+1 -1)"
+    failing = {"path": "a.py", "old_string": "zzz", "new_string": "2"}
+    shown = tool.preview(failing, context)
+    assert shown.title == "Editar a.py"
+    assert shown.error.startswith("old_string was not found in ")  # reaches the model
+    spanish = tool.execute(arguments, context)
+    (tmp_path / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+    set_language("en")
+    english = tool.execute(arguments, context)
+    assert spanish.summary == "editado a.py (+1 -1)"
+    assert english.summary == "edited a.py (+1 -1)"
+    assert spanish.output == english.output
+
+
+def test_write_file_titles_and_summaries_are_spanish_with_plurals(tmp_path):
+    from nar.tools import ToolContext
+    from nar.tools.write_file import WriteFileTool
+
+    context = ToolContext(cwd=tmp_path)
+    tool = WriteFileTool()
+    one = {"path": "a.txt", "content": "x\n"}
+    many = {"path": "b.txt", "content": "x\ny\n"}
+
+    set_language("es")
+    assert tool.preview(one, context).title == "Crear a.txt (1 línea)"
+    assert tool.preview(many, context).title == "Crear b.txt (2 líneas)"
+    assert tool.execute(one, context).summary == "creado a.txt (1 línea)"
+    assert tool.preview(one, context).title == "Sobrescribir a.txt (sin cambios)"
+    assert tool.preview({"path": "a.txt", "content": "y\n"}, context).title == (
+        "Sobrescribir a.txt"
+    )
+    assert tool.execute(many, context).summary == "creado b.txt (2 líneas)"
+    assert tool.execute({"path": "b.txt", "content": "z\n"}, context).summary == (
+        "sobrescrito b.txt (1 línea)"
+    )
+    bad = {"path": str(tmp_path), "content": "x"}
+    shown = tool.preview(bad, context)
+    assert shown.title.startswith("Escribir ")
+    assert shown.error.startswith("path is a directory: ")  # reaches the model
+
+    (tmp_path / "c.bin").write_bytes(b"\x00\x01")
+    binary = tool.preview({"path": "c.bin", "content": "t\n"}, context)
+    assert binary.detail.startswith(
+        "el archivo existente no se puede mostrar como texto; contenido nuevo: 1 línea, 2 bytes"
+    )
+
+    set_language("en")
+    assert tool.execute(many, context).output.startswith("overwritten ")
+
+
+def test_write_file_model_output_is_the_same_in_both_languages(tmp_path):
+    from nar.tools import ToolContext
+    from nar.tools.write_file import WriteFileTool
+
+    context = ToolContext(cwd=tmp_path)
+    arguments = {"path": "same.txt", "content": "a\nb\n"}
+
+    def create():
+        (tmp_path / "same.txt").unlink(missing_ok=True)
+        return WriteFileTool().execute(arguments, context)
+
+    spanish, english = _in_both_languages(create)
+    assert spanish.output == english.output
+    assert spanish.output.startswith("created ")
+    assert spanish.summary == "creado same.txt (2 líneas)"
+    assert english.summary == "created same.txt (2 lines)"
+
+
+def test_shell_title_and_summaries_are_spanish_and_the_model_result_is_not(tmp_path):
+    import sys
+
+    from nar.tools import ToolContext
+    from nar.tools.shell import ShellTool
+    from nar.tools.shell_process import find_shell
+
+    if find_shell() is None:
+        pytest.skip("no shell installed")
+    tool = ShellTool()
+    context = ToolContext(cwd=tmp_path)
+    script = tmp_path / "s.py"
+    script.write_text("print('a')\nprint('b')\n", encoding="utf-8")
+    shell = find_shell()
+    command = (
+        f"& '{sys.executable}' '{script}'" if shell.powershell else f"'{sys.executable}' '{script}'"
+    )
+
+    set_language("es")
+    assert tool.preview({"command": command, "timeout": 7}, context).title == (
+        f"Ejecutar en {shell.name} (límite 7 s)"
+    )
+    assert tool.preview({"command": ""}, context).title == "Ejecutar comando"
+    spanish = tool.execute({"command": command}, context)
+    set_language("en")
+    english = tool.execute({"command": command}, context)
+    assert spanish.summary == "salida 0 · 2 líneas"
+    assert english.summary == "exit 0 · 2 lines"
+    assert spanish.output == english.output
+    assert spanish.output.startswith("exit code: 0")  # model-bound text stays English
+
+
+def test_shell_summaries_for_no_output_and_timeout_are_spanish():
+    from types import SimpleNamespace
+
+    from nar.tools.shell import _result
+
+    def capture(lines):
+        return SimpleNamespace(total=lines, lines=lines, text=lambda: "x\n" * lines)
+
+    quiet = SimpleNamespace(exit_code=3, stdout=capture(0), stderr=capture(0), timed_out=False)
+    slow = SimpleNamespace(exit_code=None, stdout=capture(1), stderr=capture(0), timed_out=True)
+    set_language("es")
+    assert _result(quiet, 5).summary == "salida 3 · sin salida"
+    assert _result(slow, 5).summary == "se agotó el tiempo tras 5 s · 1 línea"
+    assert _result(slow, 5).output.startswith("command timed out after 5 seconds")
+    set_language("en")
+    assert _result(quiet, 5).summary == "exit 3 · no output"
+    assert _result(slow, 5).summary == "timed out after 5 s · 1 line"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from nar.i18n import t, tn
 from nar.tools.base import Tool, ToolContext, ToolPreview, ToolResult
 from nar.tools.shell_blocklist import find_blocked
 from nar.tools.shell_process import (
@@ -64,8 +65,9 @@ class ShellTool(Tool):
         timeout: int = arguments.get("timeout", DEFAULT_TIMEOUT)
         refusal = self._refusal(command, context)
         if refusal or self.shell is None:
-            return ToolPreview(title="Run command", error=refusal)
-        return ToolPreview(title=f"Run in {self.shell.name} (timeout {timeout} s)", detail=command)
+            return ToolPreview(title=t("preview.shell.title_error"), error=refusal)
+        title = t("preview.shell.title", shell=self.shell.name, timeout=timeout)
+        return ToolPreview(title=title, detail=command)
 
     def _refusal(self, command: str, context: ToolContext) -> str | None:
         """Why the command cannot be started, checked before spawning anything."""
@@ -110,8 +112,8 @@ def _section(label: str, capture: StreamCapture) -> list[str]:
     return [f"{label}:", capture.text().rstrip("\n")]
 
 
-def _plural(count: int) -> str:
-    return f"{count} line" if count == 1 else f"{count} lines"
+def _lines(count: int) -> str:
+    return tn("result.shell.lines", count)
 
 
 def _result(run: RunResult, timeout: int) -> ToolResult:
@@ -120,8 +122,8 @@ def _result(run: RunResult, timeout: int) -> ToolResult:
     if run.timed_out:
         header = f"command timed out after {timeout} seconds and was killed"
         output = "\n".join([header, *sections])
-        summary = f"timed out after {timeout} s · {_plural(lines)}"
+        summary = t("result.shell.timed_out", timeout=timeout, detail=_lines(lines))
         return ToolResult(output=output, is_error=True, summary=summary)
     output = "\n".join([f"exit code: {run.exit_code}", *(sections or ["(no output)"])])
-    detail = _plural(lines) if sections else "no output"
-    return ToolResult.ok(output, summary=f"exit {run.exit_code} · {detail}")
+    detail = _lines(lines) if sections else t("result.shell.no_output")
+    return ToolResult.ok(output, summary=t("result.shell.exit", code=run.exit_code, detail=detail))

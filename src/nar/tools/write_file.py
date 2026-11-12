@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from nar.i18n import t, tn
 from nar.tools.base import Tool, ToolContext, ToolPreview, ToolResult
 from nar.tools.files import (
     BINARY_SNIFF_BYTES,
@@ -53,10 +54,11 @@ class WriteFileTool(Tool):
             return ToolResult.error(os_error_message("write", path, exc))
 
         lines = _count_lines(content)
-        verb, past = ("overwritten", "overwrote") if existed else ("created", "created")
+        verb = "overwritten" if existed else "created"
+        key = "result.write.overwrote" if existed else "result.write.created"
         return ToolResult.ok(
             f"{verb} {path} ({lines} lines, {len(data)} bytes)",
-            summary=f"{past} {path.name} ({lines} lines)",
+            summary=tn(key, lines, name=path.name),
         )
 
     def preview(self, arguments: dict[str, Any], context: ToolContext) -> ToolPreview:
@@ -66,21 +68,20 @@ class WriteFileTool(Tool):
 
         problem = _check(path, content)
         if problem:
-            return ToolPreview(title=f"Write {shown}", error=problem)
+            return ToolPreview(title=t("preview.write.title", path=shown), error=problem)
         lines = _count_lines(content)
         if not path.exists():
-            return ToolPreview(title=f"Create {shown} ({lines} lines)", detail=content)
+            return ToolPreview(title=tn("preview.write.create", lines, path=shown), detail=content)
 
         before = _read_text(path)
+        overwrite = t("preview.write.overwrite", path=shown)
         if before is None:
-            note = (
-                "existing file cannot be shown as text; "
-                f"new content: {lines} lines, {len(content.encode('utf-8'))} bytes"
-            )
-            return ToolPreview(title=f"Overwrite {shown}", detail=f"{note}\n{content}")
+            size = len(content.encode("utf-8"))
+            note = tn("preview.write.binary_note", lines, bytes=size)
+            return ToolPreview(title=overwrite, detail=f"{note}\n{content}")
         if before == content:
-            return ToolPreview(title=f"Overwrite {shown} (no changes)")
-        return ToolPreview(title=f"Overwrite {shown}", diff=unified_diff(before, content, shown))
+            return ToolPreview(title=t("preview.write.overwrite_same", path=shown))
+        return ToolPreview(title=overwrite, diff=unified_diff(before, content, shown))
 
     def is_project_edit(self, arguments: dict[str, Any], context: ToolContext) -> bool:
         return is_project_path(resolve_path(arguments["path"], context.cwd), context.cwd)
