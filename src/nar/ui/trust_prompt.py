@@ -10,10 +10,9 @@ from typing import TextIO
 from rich.console import Console
 from rich.text import Text
 
+from nar.i18n import t
+from nar.i18n.answers import Answer, parse_answer
 from nar.ui.approval_prompt import _is_terminal
-
-_YES = {"y", "yes"}
-_NO = {"n", "no"}
 
 
 class TrustPrompter:
@@ -34,21 +33,21 @@ class TrustPrompter:
 
     def ask(self, folder: Path, files: list[Path]) -> bool:
         """An empty or unknown answer asks again; end of input and Ctrl+C mean no."""
-        self._print(f"This project has tool files in {folder}:", "yellow")
+        self._print(t("trust.header", folder=folder), "yellow")
         for path in files:
             self._print(f"  {path.name}")
-        self._print("They run as code with your permissions, as soon as you allow them.")
+        self._print(t("trust.warning"))
         read = self._read_line or input
         while True:
-            self._console.print(Text("Run these files? [y]es / [n]o: "), end="", highlight=False)
+            self._console.print(Text(t("trust.question")), end="", highlight=False)
             try:
-                answer = read("").strip().lower()
+                answer = parse_answer(read(""))
             except (EOFError, KeyboardInterrupt):
                 self._console.print()
                 return False
-            if answer in _YES:
+            if answer is Answer.YES:
                 return True
-            if answer in _NO:
+            if answer is Answer.NO:
                 return False
 
     def _print(self, text: str, style: str = "") -> None:

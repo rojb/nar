@@ -1121,7 +1121,7 @@ def test_single_mode_asks_on_the_terminal_and_runs_the_approved_call(
     terminal("y")
     fake_provider.script = [write_file_call(), LLMResponse("Created.")]
 
-    result = runner.invoke(main, ["create a.txt"])
+    result = runner.invoke(main, ["--language", "en", "create a.txt"])
 
     assert result.exit_code == 0
     assert (workdir / "a.txt").read_bytes() == b"hi\n"
@@ -1165,7 +1165,7 @@ def test_auto_edit_still_asks_for_a_shell_command(runner, workdir, fake_provider
     terminal("n", "")
     fake_provider.script = [tool_call("shell", command="python --version"), LLMResponse("Ok.")]
 
-    result = runner.invoke(main, ["--approval", "auto-edit", "run python"])
+    result = runner.invoke(main, ["--language", "en", "--approval", "auto-edit", "run python"])
 
     assert "Allow shell?" in result.stderr
     assert "rejected by user" in result.stderr
@@ -1189,7 +1189,7 @@ def test_interactive_mode_asks_and_goes_on_to_the_next_prompt(
     terminal("create a.txt", "y", "thanks", "exit")
     fake_provider.script = [write_file_call(), LLMResponse("Created."), LLMResponse("Welcome.")]
 
-    result = runner.invoke(main, [])
+    result = runner.invoke(main, ["--language", "en"])
 
     assert result.exit_code == 0
     assert (workdir / "a.txt").exists()
@@ -1274,7 +1274,7 @@ def test_single_mode_asks_before_an_mcp_call_at_the_default_level(
     terminal("y")
     fake_provider.script = echo_script(fake_provider, "mcp__demo__echo", text="approved")
 
-    result = runner.invoke(main, ["echo something"])
+    result = runner.invoke(main, ["--language", "en", "echo something"])
 
     assert result.exit_code == 0
     assert result.stdout == "tool said: approved\n"
@@ -1642,7 +1642,9 @@ def at_a_terminal(monkeypatch):
 
 
 def test_a_missing_key_is_asked_for_checked_and_saved(runner, fake_provider, at_a_terminal):
-    result = runner.invoke(main, ["--provider", "deepseek"], input="y\nhello\nexit\n")
+    result = runner.invoke(
+        main, ["--language", "en", "--provider", "deepseek"], input="y\nhello\nexit\n"
+    )
     assert result.exit_code == 0
     assert "DEEPSEEK_API_KEY is not set." in result.stderr
     assert "saved DEEPSEEK_API_KEY for your Windows user" in result.stderr
@@ -1682,7 +1684,7 @@ def test_model_asks_for_a_missing_key_and_keeps_the_previous_one_on_rejection(
     )
     first.script = [LLMResponse("still here")]
     lines = "/model anthropic\nare you there?\nexit\n"
-    result = runner.invoke(main, ["--provider", "ollama"], input=lines)
+    result = runner.invoke(main, ["--language", "en", "--provider", "ollama"], input=lines)
     assert result.exit_code == 0
     assert "ANTHROPIC_API_KEY is not set." in result.stderr
     assert "still using fake · fake-model" in result.stderr

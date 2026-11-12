@@ -49,4 +49,21 @@ def t(key: str, **values: object) -> str:
     return text.format(**values)
 
 
-__all__ = ["DEFAULT_LANGUAGE", "UnknownMessageKey", "current_language", "set_language", "t"]
+def tn(key: str, count: int, **values: object) -> str:
+    """Like ``t`` for a text that depends on a count: uses ``<key>.one`` when ``count`` is 1.
+
+    Any other count uses ``<key>.other``. ``count`` is passed to the text as ``{count}``, so each
+    language writes its own grammar in its own pair of keys.
+    """
+    suffix = "one" if count == 1 else "other"
+    return t(f"{key}.{suffix}", count=count, **values)
+
+
+__all__ = [
+    "DEFAULT_LANGUAGE",
+    "UnknownMessageKey",
+    "current_language",
+    "set_language",
+    "t",
+    "tn",
+]

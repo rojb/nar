@@ -13,10 +13,10 @@ from typing import TextIO
 from rich.console import Console
 from rich.text import Text
 
+from nar.i18n import t
+from nar.i18n.answers import Answer, parse_answer
 from nar.ui.approval_prompt import _is_terminal
 
-_YES = {"y", "yes"}
-_NO = {"n", "no"}
 CTRL_V = "\x16"  # what Ctrl+V sends in the classic Windows console, where it does not paste
 
 
@@ -32,11 +32,11 @@ def clean_key(env: str, text: str) -> tuple[str, str | None]:
     if len(key) >= 2 and key[0] == key[-1] and key[0] in "\"'":
         key = key[1:-1].strip()
     if CTRL_V in key:
-        return key, "Ctrl+V does not paste here: paste with a right-click"
+        return key, t("key.reason.ctrl_v")
     if any(ord(char) < 32 or ord(char) == 127 for char in key):
-        return key, "the key has invisible characters; paste it again"
+        return key, t("key.reason.invisible")
     if any(char.isspace() for char in key):
-        return key, "a key has no spaces; paste it again"
+        return key, t("key.reason.spaces")
     return key, None
 
 
@@ -65,12 +65,12 @@ class KeyPrompter:
         A key that cannot be right (Ctrl+V, other invisible characters, spaces) is not
         returned: the reason is shown, without the key, and the key is asked for again.
         """
-        self._console.print(Text(f"{env} is not set.", "yellow"), highlight=False)
+        self._console.print(Text(t("key.not_set", env=env), "yellow"), highlight=False)
         read = self._read_secret or getpass.getpass
         while True:
             try:
                 # getpass writes its prompt to the console itself, never to standard output.
-                pasted = read(f"Paste your {provider} API key (hidden; Enter to cancel): ")
+                pasted = read(t("key.paste", provider=provider))
             except (EOFError, KeyboardInterrupt):
                 self._console.print()
                 return None
@@ -84,15 +84,15 @@ class KeyPrompter:
     def ask_save(self, env: str) -> bool:
         """An empty or unknown answer asks again; end of input and Ctrl+C mean no."""
         read = self._read_line or input
-        question = f"Save {env} for your user, for the next time? [y]es / [n]o: "
+        question = t("key.save", env=env)
         while True:
             self._console.print(Text(question), end="", highlight=False)
             try:
-                answer = read("").strip().lower()
+                answer = parse_answer(read(""))
             except (EOFError, KeyboardInterrupt):
                 self._console.print()
                 return False
-            if answer in _YES:
+            if answer is Answer.YES:
                 return True
-            if answer in _NO:
+            if answer is Answer.NO:
                 return False
