@@ -10,9 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from nar.agent.approval import ApprovalGate
-from nar.cli.slash import SlashContext, register_command
+from nar.cli.slash import PendingSkill, SlashContext, register_command
 from nar.config.models import ApprovalLevel
 from nar.errors import NarError
+from nar.skills import Skill, SkillError, read_instructions, user_skills_dir
 
 
 def _line(context: SlashContext, text: str) -> None:
@@ -35,6 +36,7 @@ def _clear(context: SlashContext, argument: str) -> None:
         _line(context, "error: there is no conversation to clear")
         return
     clear_conversation(agent, context.recorder)
+    context.pending_skill = None
     _line(context, "cleared: the earlier messages are gone; provider and approval stay")
 
 
@@ -142,6 +144,45 @@ def _tokens(context: SlashContext, argument: str) -> None:
     show_context_usage(context.agent, context.view)
 
 
+def _available_skills(context: SlashContext) -> tuple[Skill, ...]:
+    return context.agent.skills if context.agent is not None else ()
+
+
+def _skills(context: SlashContext, argument: str) -> None:
+    skills = _available_skills(context)
+    if not skills:
+        _line(
+            context,
+            f"no skills found; looked in .nar/skills/ and {user_skills_dir()}",
+        )
+        return
+    for skill in skills:
+        _line(context, f"{skill.name} ({skill.origin}): {skill.description}")
+
+
+def _skill(context: SlashContext, argument: str) -> None:
+    skills = _available_skills(context)
+    words = argument.split(None, 1)
+    name = words[0] if words else ""
+    request = words[1].strip() if len(words) == 2 else ""
+    chosen = next((skill for skill in skills if skill.name == name), None)
+    if chosen is None:
+        listing = ", ".join(skill.name for skill in skills) or "none"
+        if name:
+            _line(context, f"error: there is no skill named '{name}'; available skills: {listing}")
+        else:
+            _line(context, f"error: use /skill <name> [request]; available skills: {listing}")
+        return
+    try:
+        instructions = read_instructions(chosen)
+    except SkillError as exc:
+        _line(context, f"error: cannot load the skill '{chosen.name}': {exc.message}")
+        return
+    context.pending_skill = PendingSkill(chosen.name, chosen.folder.resolve(), instructions)
+    context.queued_request = request or None
+    _line(context, f"Skill {chosen.name} will be used with the next request.")
+
+
 register_command("help", _help, "list every command")
 register_command("clear", _clear, "start a new conversation, keeping provider and approval")
 register_command("exit", _exit, "leave interactive mode")
@@ -151,3 +192,5 @@ register_command("approval", _approval, "show or change the approval level: /app
 register_command("config", _config, "show the effective configuration and where it came from")
 register_command("tools", _tools, "list the tools the model can call")
 register_command("tokens", _tokens, "show the context usage")
+register_command("skills", _skills, "list the available skills")
+register_command("skill", _skill, "use a skill: /skill <name> [request]")
