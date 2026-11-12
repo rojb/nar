@@ -72,14 +72,22 @@ def test_before_tool_payload_and_a_zero_exit_lets_the_call_run(tmp_path):
 
 def test_the_block_code_refuses_the_call(tmp_path):
     command = "import sys; print('edits are only allowed inside src/'); sys.exit(2)"
-    warns = []
-    hook_runner = runner({HookEvent.BEFORE_TOOL: [command]}, tmp_path, warns=warns)
+    notes, warns = [], []
+    hook_runner = runner({HookEvent.BEFORE_TOOL: [command]}, tmp_path, notes=notes, warns=warns)
     result = hook_runner.before_tool(ToolCall("c1", "edit_file", {"path": "README.md"}))
     assert result is not None
     assert result.is_error is True
     assert result.error_kind is FailureKind.REFUSED
     assert "edits are only allowed inside src/" in result.output
     assert result.output.startswith("the before_tool hook refused this call: ")
+    assert warns == []  # a refusal is the hook working, not a failure
+    assert "edits are only allowed inside src/" in notes  # the user still sees the hook's text
+
+
+def test_exit_code_2_from_an_event_that_cannot_refuse_still_warns(tmp_path):
+    warns = []
+    hook_runner = runner({HookEvent.AFTER_TOOL: ["import sys; sys.exit(2)"]}, tmp_path, warns=warns)
+    hook_runner.after_tool(ToolCall("c1", "echo", {}), ToolResult("ok"))
     assert any("failed with exit code 2" in warning for warning in warns)
 
 
