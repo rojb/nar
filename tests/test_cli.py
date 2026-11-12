@@ -1804,7 +1804,7 @@ def test_no_balance_offers_the_other_providers_and_retries_there(
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
     second.script = [LLMResponse("answered by the second provider")]
-    result = runner.invoke(main, [], input="fix the bug\n3\n/model\nexit\n")
+    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n3\n/model\nexit\n")
     assert result.exit_code == 0
     stderr = result.stderr
     assert f"error: {NO_BALANCE}" in stderr
@@ -1824,7 +1824,7 @@ def test_no_balance_offers_the_other_providers_and_retries_there(
 def test_enter_at_the_list_stays_on_the_provider(runner, monkeypatch, menu_at_a_terminal):
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
-    result = runner.invoke(main, [], input="fix the bug\n\n/model\nexit\n")
+    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n\n/model\nexit\n")
     assert result.exit_code == 0
     assert "Enter: stay on fake" in result.stderr
     assert "provider fake (default), model fake-model (default)" in result.stderr
@@ -1836,7 +1836,7 @@ def test_a_pick_that_fails_its_check_shows_the_list_again(runner, monkeypatch, m
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
     second.check_error = ProviderError(OLLAMA_DOWN, "ollama", unavailable=True)
-    result = runner.invoke(main, [], input="fix the bug\n3\n\nexit\n")
+    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n3\n\nexit\n")
     assert result.exit_code == 0
     assert OLLAMA_DOWN in result.stderr
     assert result.stderr.count("can't answer. Continue with another provider?") == 2
@@ -1849,7 +1849,7 @@ def test_a_second_failure_offers_the_list_without_the_tried_providers(
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
     second.script = [ProviderError("ollama failed after 4 attempts", "ollama", unavailable=True)]
-    result = runner.invoke(main, [], input="fix the bug\n3\n\nexit\n")
+    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n3\n\nexit\n")
     assert result.exit_code == 0
     assert "Choose 1-4:" in result.stderr
     assert "ollama can't answer" in result.stderr
@@ -1858,14 +1858,14 @@ def test_a_second_failure_offers_the_list_without_the_tried_providers(
 
 def test_a_user_mistake_offers_no_list(runner, fake_provider, menu_at_a_terminal):
     fake_provider.script = [ProviderError("deepseek rejected the API key; check X", "deepseek")]
-    result = runner.invoke(main, [], input="fix the bug\nexit\n")
+    result = runner.invoke(main, ["--language", "en"], input="fix the bug\nexit\n")
     assert "rejected the API key" in result.stderr
     assert "Continue with another provider?" not in result.stderr
 
 
 def test_piped_input_offers_no_list(runner, fake_provider):
     fake_provider.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
-    result = runner.invoke(main, [], input="fix the bug\nexit\n")
+    result = runner.invoke(main, ["--language", "en"], input="fix the bug\nexit\n")
     assert NO_BALANCE in result.stderr
     assert "Continue with another provider?" not in result.stderr
 

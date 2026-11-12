@@ -70,3 +70,26 @@ def test_options_show_whether_each_key_is_set(monkeypatch):
     assert options["anthropic"].model == "claude-sonnet-5-5"
     assert options["openrouter"].status == "no key: it will ask for one"
     assert options["ollama"].status == "local, no key"
+
+
+# --- Spanish -------------------------------------------------------------------------------
+
+
+def test_the_menu_text_is_spanish_and_names_and_models_are_unchanged(monkeypatch):
+    from nar.i18n import set_language
+
+    set_language("es")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    options = provider_options({"deepseek"})
+    chooser, out = menu("", "9", "2")
+
+    assert chooser.choose("deepseek", options) is None
+    assert chooser.choose("deepseek", options) == "openrouter"
+    text = out.getvalue()
+    assert "deepseek no puede responder. ¿Continuar con otro proveedor?" in text
+    assert "1. anthropic   · claude-sonnet-5-5  (clave definida)" in text
+    assert "2. openrouter  · openrouter/auto  (sin clave: se pedirá una)" in text
+    assert "3. ollama      · qwen2.5-coder  (local, sin clave)" in text
+    assert "Enter: quedarse en deepseek" in text
+    assert "Elige 1-3: " in text

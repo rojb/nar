@@ -22,4 +22,10 @@ MESSAGES: dict[str, str] = {
     "key.reason.ctrl_v": "Ctrl+V no pega aquí: pega con clic derecho",
     "key.reason.invisible": "la clave tiene caracteres invisibles; vuelve a pegarla",
     "key.reason.spaces": "una clave no tiene espacios; vuelve a pegarla",
+    "menu.cant_answer": "{failed} no puede responder. ¿Continuar con otro proveedor?",
+    "menu.stay": "Enter: quedarse en {failed}",
+    "menu.choose": "Elige 1-{count}: ",
+    "provider.status.key_set": "clave definida",
+    "provider.status.no_key": "sin clave: se pedirá una",
+    "provider.status.local": "local, sin clave",
 }

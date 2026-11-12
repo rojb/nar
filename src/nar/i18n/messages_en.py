@@ -22,4 +22,10 @@ MESSAGES: dict[str, str] = {
     "key.reason.ctrl_v": "Ctrl+V does not paste here: paste with a right-click",
     "key.reason.invisible": "the key has invisible characters; paste it again",
     "key.reason.spaces": "a key has no spaces; paste it again",
+    "menu.cant_answer": "{failed} can't answer. Continue with another provider?",
+    "menu.stay": "Enter: stay on {failed}",
+    "menu.choose": "Choose 1-{count}: ",
+    "provider.status.key_set": "key set",
+    "provider.status.no_key": "no key: it will ask for one",
+    "provider.status.local": "local, no key",
 }
