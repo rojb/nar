@@ -82,6 +82,11 @@ class ToolRegistry:
             result = ToolResult.error(
                 f"{type(error).__name__}: {error}", FailureKind.UNEXPECTED_ERROR
             )
+        if not isinstance(result, ToolResult):  # a broken tool must not end the session
+            result = ToolResult.error(
+                f"{name} returned {type(result).__name__} instead of a ToolResult",
+                FailureKind.TOOL_ERROR,
+            )
         return self._finish(result)
 
     def _missing_message(self, name: str) -> str:
