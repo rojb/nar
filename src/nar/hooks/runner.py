@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from nar.config.models import HookEvent
+from nar.i18n import t
 from nar.providers.messages import ToolCall
 from nar.tools.base import FailureKind, ToolResult
 from nar.tools.shell_process import ShellSpec, build_argv, find_shell, run_command
@@ -150,7 +151,7 @@ class HookRunner:
     def _run_one(self, event: HookEvent, command: str, payload: dict[str, Any]) -> HookOutcome:
         shell = self.shell
         if shell is None:
-            outcome = HookOutcome(event, command, error="no shell found on this system")
+            outcome = HookOutcome(event, command, error=t("hook.no_shell"))
             self._report(outcome)
             return outcome
         body = dict(payload)
@@ -173,17 +174,28 @@ class HookRunner:
         event = outcome.event.value
         # A before_tool hook that did not use the block code let the call run: say so, or the
         # user would think the project's rule applied.
-        unblocked = " and did not block the call" if outcome.event is HookEvent.BEFORE_TOOL else ""
+        unblocked = ".unblocked" if outcome.event is HookEvent.BEFORE_TOOL else ""
+        prefix = t("warning.prefix")
         if outcome.error is not None:
             self.warn(
-                f"warning: hook {event} could not run: {outcome.error}{unblocked}: "
-                f"{outcome.command}"
+                t(
+                    f"hook.could_not_run{unblocked}",
+                    prefix=prefix,
+                    event=event,
+                    error=outcome.error,
+                    command=outcome.command,
+                )
             )
             return
         if outcome.timed_out:
             self.warn(
-                f"warning: hook {event} timed out after {self.timeout:g} s{unblocked}: "
-                f"{outcome.command}"
+                t(
+                    f"hook.timed_out{unblocked}",
+                    prefix=prefix,
+                    event=event,
+                    seconds=f"{self.timeout:g}",
+                    command=outcome.command,
+                )
             )
             self._show(outcome)
             return
@@ -194,12 +206,17 @@ class HookRunner:
             return
         if outcome.exit_code != 0:
             self.warn(
-                f"warning: hook {event} failed with exit code {outcome.exit_code}"
-                f"{unblocked}: {outcome.command}"
+                t(
+                    f"hook.failed{unblocked}",
+                    prefix=prefix,
+                    event=event,
+                    code=outcome.exit_code,
+                    command=outcome.command,
+                )
             )
             self._show(outcome)
             return
-        self.note(f"hook {event}: {outcome.command}")
+        self.note(t("hook.ran", event=event, command=outcome.command))
         self._show(outcome)
 
     def _show(self, outcome: HookOutcome) -> None:

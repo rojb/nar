@@ -5,6 +5,7 @@ import pytest
 from nar.cli import main
 from nar.i18n import set_language
 from nar.session import SessionFileError, SessionNotFound, SessionStore, sessions_dir
+from nar.tools.base import ToolResult
 from test_cli import _Runner
 
 
@@ -241,3 +242,201 @@ def test_project_instruction_warnings_use_the_aviso_prefix(workdir, capsys):
     (workdir / "AGENTS.md").write_text("x" * (65 * 1024), encoding="utf-8")
     load_project_instructions(workdir)
     assert "pesa más de 64 KB; solo se usan los primeros 64 KB" in capsys.readouterr().err
+
+
+# --- warnings and notes of MCP, hooks, custom tools, compaction and retries (4.3) -----------------
+
+
+def test_mcp_manager_warnings_and_note_are_spanish(tmp_path, monkeypatch):
+    from nar.config import McpServerConfig
+    from nar.mcp.manager import McpManager
+
+    monkeypatch.setenv("NAR_HOME", str(tmp_path / "nar-home"))
+    set_language("es")
+    notes, warnings = [], []
+    manager = McpManager.connect(
+        {"x": McpServerConfig(command="does-not-exist")}, {}, notes.append, warnings.append
+    )
+    manager.close()
+    assert notes == ["conectando servidores MCP: x ..."]
+    assert warnings == [
+        "aviso: el servidor MCP 'x' no está disponible: command 'does-not-exist' not found"
+    ]
+
+
+def test_mcp_tool_warnings_are_spanish(tmp_path):
+    from test_mcp_tool import FakeConnection, make_manager, register, spec
+
+    set_language("es")
+    manager = make_manager(
+        {"s": ([spec("a"), spec("b")], FakeConnection(), {"enabled_tools": ["a", "zz"]})}
+    )
+    _, warnings = register(manager, tmp_path)
+    assert warnings == [
+        "aviso: el servidor MCP 's' no tiene la herramienta 'zz' (revisa enabled_tools)"
+    ]
+
+
+def _hook_runner(tmp_path, hooks, **kwargs):
+    from test_hooks_runner import runner
+
+    return runner(hooks, tmp_path, **kwargs)
+
+
+def test_hook_warnings_and_notes_are_spanish_and_the_refusal_stays_english(tmp_path):
+    from nar.config.models import HookEvent
+    from nar.providers.messages import ToolCall
+
+    set_language("es")
+    notes, warns = [], []
+    hooks = _hook_runner(
+        tmp_path,
+        {HookEvent.BEFORE_TOOL: ["import sys; print('no way'); sys.exit(2)"]},
+        notes=notes,
+        warns=warns,
+    )
+    result = hooks.before_tool(ToolCall("c1", "edit_file", {"path": "a.py"}))
+    assert result.output == "the before_tool hook refused this call: no way"
+    assert warns == []
+
+    hooks = _hook_runner(
+        tmp_path, {HookEvent.BEFORE_TOOL: ["import sys; sys.exit(1)"]}, notes=notes, warns=warns
+    )
+    assert hooks.before_tool(ToolCall("c1", "edit_file", {})) is None
+    assert warns[-1].startswith("aviso: el hook before_tool falló con el código de salida 1 y no")
+    assert "bloqueó la llamada: " in warns[-1]
+
+    hooks = _hook_runner(
+        tmp_path, {HookEvent.AFTER_TOOL: ["import sys; sys.exit(1)"]}, notes=notes, warns=warns
+    )
+    hooks.after_tool(ToolCall("c1", "echo", {}), ToolResult("ok"))
+    assert warns[-1].startswith("aviso: el hook after_tool falló con el código de salida 1: ")
+
+    hooks = _hook_runner(
+        tmp_path,
+        {HookEvent.BEFORE_TOOL: ["import time; time.sleep(30)"]},
+        timeout=0.3,
+        warns=warns,
+    )
+    hooks.before_tool(ToolCall("c1", "edit_file", {}))
+    assert warns[-1].startswith(
+        "aviso: el hook before_tool superó el tiempo de espera de 0.3 s y no bloqueó la llamada: "
+    )
+    hooks = _hook_runner(tmp_path, {HookEvent.BEFORE_AGENT: ["print('hi')"]}, notes=notes)
+    hooks.before_agent("p")
+    assert any(note.startswith("hook before_agent: ") for note in notes)
+
+
+def test_a_hook_that_cannot_run_without_a_shell_warns_in_spanish(tmp_path):
+    from nar.config.models import HookEvent
+    from nar.hooks import HookRunner
+
+    set_language("es")
+    warns = []
+    hooks = HookRunner({HookEvent.AFTER_AGENT: ["x"]}, tmp_path, warn=warns.append)
+    hooks._shell, hooks._shell_resolved = None, True
+    hooks.after_agent("p", "done", 1)
+    assert warns == [
+        "aviso: el hook after_agent no se pudo ejecutar: no se encontró ningún shell en este "
+        "sistema: x"
+    ]
+
+
+def test_custom_tool_messages_are_spanish_and_count_correctly(tmp_path, monkeypatch):
+    from nar.tools import ToolContext, ToolRegistry
+    from nar.tools.custom import load_custom_tools
+
+    class Cannot:
+        def available(self):
+            return False
+
+        def ask(self, folder, files):
+            return False
+
+    monkeypatch.setenv("NAR_HOME", str(tmp_path / "home"))
+    project = tmp_path / "project"
+    tools = project / ".nar" / "tools"
+    tools.mkdir(parents=True)
+    (tools / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    def load():
+        warnings = []
+        registry = ToolRegistry(ToolContext(project))
+        load_custom_tools(registry, project, Cannot(), False, print, warnings.append)
+        return warnings
+
+    set_language("es")
+    (warning,) = load()
+    assert warning.startswith("aviso: no se ejecuta el archivo de herramientas de ")
+    assert warning.endswith("usa --trust-project-tools para permitirlo")
+    (tools / "b.py").write_text("x = 2\n", encoding="utf-8")
+    assert load()[0].startswith("aviso: no se ejecutan los 2 archivos de herramientas de ")
+    set_language("en")
+    assert load()[0].startswith("warning: not running the 2 tool files in ")
+
+
+def test_custom_tool_file_problems_and_notes_are_spanish(tmp_path, monkeypatch):
+    from nar.tools import ToolContext, ToolRegistry
+    from nar.tools.custom import load_custom_tools
+    from test_tools_custom import Question, good
+
+    monkeypatch.setenv("NAR_HOME", str(tmp_path / "home"))
+    tools = tmp_path / "home" / "tools"
+    tools.mkdir(parents=True)
+    (tools / "ok.py").write_text(good(), encoding="utf-8")
+    (tools / "bad.py").write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+    set_language("es")
+    notes, warnings = [], []
+    project = tmp_path / "project"
+    project.mkdir()
+    registry = ToolRegistry(ToolContext(project))
+    load_custom_tools(registry, project, Question(), False, notes.append, warnings.append)
+    assert any(note.startswith("herramienta propia cargada: custom_one (") for note in notes)
+    assert any(w.startswith("aviso: archivo de herramienta ") and "boom" in w for w in warnings)
+
+
+def test_compaction_errors_are_spanish():
+    from nar.context.compaction import CompactionError
+    from nar.context.manager import ContextManager
+    from nar.providers.messages import Message
+    from test_context_compaction import SummaryProvider, compactor, conversation, long_session
+
+    set_language("es")
+    cases = [
+        (ContextManager("system"), SummaryProvider(), "no hay nada que compactar"),
+        (
+            conversation(*long_session()),
+            SummaryProvider(""),
+            "el modelo devolvió un resumen vacío",
+        ),
+        (
+            conversation(Message.user("hello"), Message.assistant("x" * 40)),
+            SummaryProvider("s" * 500),
+            "el resumen no haría más pequeña la conversación",
+        ),
+    ]
+    for context, provider, text in cases:
+        with pytest.raises(CompactionError) as caught:
+            compactor(provider).compact(context)
+        assert caught.value.message == text
+
+
+def test_retry_notice_is_spanish_and_its_reason_stays_available_in_english():
+    from nar.providers.retry import RetryNotice, RetryPolicy, stream_with_retries
+    from test_retry import CONTEXT, DONE, Script, connection_error, status_error
+
+    set_language("es")
+    notices = []
+    script = Script(status_error(503), connection_error(), DONE)
+    policy = RetryPolicy(sleep=lambda seconds: None)
+    list(stream_with_retries(script, CONTEXT, policy, notices.append))
+    assert [n.reason for n in notices] == ["server error 503", "connection error"]
+    assert str(notices[0]) == (
+        f"reintentando openrouter en {notices[0].delay:.1f}s (error del servidor 503, intento 2/4)"
+    )
+    assert "(error de conexión, intento 3/4)" in str(notices[1])
+    set_language("en")
+    assert str(notices[0]) == (
+        f"retrying openrouter in {notices[0].delay:.1f}s (server error 503, attempt 2/4)"
+    )
+    assert isinstance(notices[0], RetryNotice)

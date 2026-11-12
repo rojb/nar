@@ -15,6 +15,7 @@ import anthropic
 import openai
 
 from nar.errors import ProviderError
+from nar.i18n import t, t_en
 from nar.providers.messages import StreamEvent
 
 STATUS_ERRORS = (anthropic.APIStatusError, openai.APIStatusError)
@@ -35,12 +36,21 @@ class RetryNotice:
     attempt: int  # the attempt about to start, 2..max_attempts
     max_attempts: int
     delay: float
-    reason: str
+    reason: str  # English; ``reason_key`` is the catalog key that words it for the user
+    reason_key: str | None = None
+    status: int | None = None
 
     def __str__(self) -> str:
-        return (
-            f"retrying {self.provider} in {self.delay:.1f}s "
-            f"({self.reason}, attempt {self.attempt}/{self.max_attempts})"
+        reason = self.reason
+        if self.reason_key is not None:
+            reason = t(self.reason_key, status=self.status)
+        return t(
+            "retry.notice",
+            provider=self.provider,
+            delay=f"{self.delay:.1f}",
+            reason=reason,
+            attempt=self.attempt,
+            max_attempts=self.max_attempts,
         )
 
 
@@ -100,15 +110,25 @@ def stream_with_retries(
         except ProviderError:
             raise
         except Exception as exc:
-            reason = retry_reason(exc)
-            if started or reason is None:
+            retry = _retry_kind(exc)
+            if started or retry is None:
                 raise translate_error(exc, context) from exc
             if attempt >= max_attempts:
                 raise _exhausted(exc, context, attempt) from exc
             delay = policy.delay_for(attempt, _retry_after(exc))
             attempt += 1
             if on_retry is not None:
-                on_retry(RetryNotice(context.provider, attempt, max_attempts, delay, reason))
+                reason_key, status = retry
+                notice = RetryNotice(
+                    context.provider,
+                    attempt,
+                    max_attempts,
+                    delay,
+                    t_en(reason_key, status=status),
+                    reason_key,
+                    status,
+                )
+                on_retry(notice)
             policy.sleep(delay)
 
 
@@ -129,19 +149,25 @@ def call_once(call: Callable[[], T], context: ErrorContext, timeout: float) -> T
 
 
 def retry_reason(exc: Exception) -> str | None:
-    """A short reason when ``exc`` is worth retrying, else ``None``."""
+    """A short English reason when ``exc`` is worth retrying, else ``None``."""
+    kind = _retry_kind(exc)
+    return None if kind is None else t_en(kind[0], status=kind[1])
+
+
+def _retry_kind(exc: Exception) -> tuple[str, int | None] | None:
+    """The catalog key of the reason to retry ``exc`` and its HTTP status, else ``None``."""
     if isinstance(exc, TIMEOUT_ERRORS):
-        return "timeout"
+        return "retry.reason.timeout", None
     if isinstance(exc, CONNECTION_ERRORS):
-        return "connection error"
+        return "retry.reason.connection", None
     if isinstance(exc, STATUS_ERRORS):
         status = exc.status_code
         if status == 429:
-            return "rate limited"
+            return "retry.reason.rate_limited", status
         if status == 529:
-            return "overloaded"
+            return "retry.reason.overloaded", status
         if status >= 500 or status in RETRYABLE_STATUS:
-            return f"server error {status}"
+            return "retry.reason.server_error", status
     return None
 
 

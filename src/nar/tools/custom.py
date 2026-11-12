@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Protocol
 
 from nar.config import paths
+from nar.i18n import t, tn
 from nar.tools.base import Tool
 from nar.tools.registry import ToolRegistry
 
@@ -109,7 +110,9 @@ class TrustStore:
         try:
             write_private(self.path, text)
         except OSError as exc:
-            self.warn(f"warning: cannot remember this answer: {exc.strerror or exc}")
+            self.warn(
+                t("custom.cannot_remember", prefix=t("warning.prefix"), reason=exc.strerror or exc)
+            )
 
     def _load(self, quiet: bool = False) -> dict[str, str]:
         if not self.path.exists():
@@ -126,7 +129,9 @@ class TrustStore:
                 raise ValueError("unexpected content")
         except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError) as exc:
             if not quiet:
-                self.warn(f"warning: ignoring {self.path}: {exc}")
+                self.warn(
+                    t("custom.ignoring", prefix=t("warning.prefix"), path=self.path, reason=exc)
+                )
             return {}
         return dict(projects)
 
@@ -153,19 +158,31 @@ def load_custom_tools(
     try:
         contents = fingerprint(files)
     except OSError as exc:
-        warn(f"warning: not running the tool files in {project_folder}: {exc.strerror or exc}")
+        reason = exc.strerror or exc
+        warn(
+            t(
+                "custom.not_running_unreadable",
+                prefix=t("warning.prefix"),
+                folder=project_folder,
+                reason=reason,
+            )
+        )
         return
     store = TrustStore(home / "trusted_tools.json", warn)
     if not store.allowed(folder, contents):
         if not trust_project:
             if not question.available():
                 warn(
-                    f"warning: not running the {len(files)} tool files in {project_folder}: "
-                    "nar cannot ask here; use --trust-project-tools to allow them"
+                    tn(
+                        "custom.not_running_cannot_ask",
+                        len(files),
+                        prefix=t("warning.prefix"),
+                        folder=project_folder,
+                    )
                 )
                 return
             if not question.ask(project_folder, files):
-                note(f"project tools skipped: {project_folder}")
+                note(t("custom.skipped", folder=project_folder))
                 return
         store.remember(folder, contents)
     _register_files(registry, files, note, warn)
@@ -175,7 +192,7 @@ def _register_files(registry: ToolRegistry, files: list[Path], note: Report, war
     for path in files:
         tools, problems = load_tool_file(path)
         for problem in problems:
-            warn(f"warning: custom tool file {path}: {problem}")
+            warn(t("custom.file_problem", prefix=t("warning.prefix"), path=path, problem=problem))
         for tool in tools:
             try:
                 _check_definition(tool)
@@ -183,9 +200,9 @@ def _register_files(registry: ToolRegistry, files: list[Path], note: Report, war
             except KeyboardInterrupt:
                 raise
             except Exception as exc:
-                warn(f"warning: custom tool file {path}: {exc}")
+                warn(t("custom.file_problem", prefix=t("warning.prefix"), path=path, problem=exc))
             else:
-                note(f"custom tool loaded: {tool.name} ({path})")
+                note(t("custom.loaded", tool=tool.name, path=path))
 
 
 def _check_definition(tool: Tool) -> None:

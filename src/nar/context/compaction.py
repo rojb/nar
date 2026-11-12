@@ -13,6 +13,7 @@ from nar.config.models import Language
 from nar.context.manager import CHARS_PER_TOKEN, ContextManager, estimate_messages
 from nar.context.pruning import unseen_start
 from nar.errors import NarError
+from nar.i18n import t
 from nar.providers.base import LLMProvider
 from nar.providers.messages import Message
 
@@ -111,17 +112,17 @@ class Compactor:
         """
         head, tail = self._split(context)
         if not head:
-            raise CompactionError("there is nothing to compact")
+            raise CompactionError(t("compaction.error.nothing"))
         summary = self._summarize(head).strip()
         if not summary:
-            raise CompactionError("the model returned an empty summary")
+            raise CompactionError(t("compaction.error.empty_summary"))
         request_is_kept = any(m.role == "user" and m.content == current_request for m in tail)
         text = f"{SUMMARY_HEADER}\n\n{summary}"
         if current_request is not None and not request_is_kept:
             text += f"\n\nThe user's current request:\n{current_request}"
         compacted = (Message.user(text), *tail)
         if estimate_messages(compacted) >= estimate_messages(context.messages):
-            raise CompactionError("the summary would not make the conversation smaller")
+            raise CompactionError(t("compaction.error.not_smaller"))
         context.replace_messages(compacted)
 
     def _split(self, context: ContextManager) -> tuple[tuple[Message, ...], tuple[Message, ...]]:
