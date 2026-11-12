@@ -210,6 +210,7 @@ def switch_model(agent: Agent, view: AgentView, spec: str) -> None:
     if pending is not None:
         keep_api_key(pending, prompter, view.note, view.warn)
     agent.provider = provider
+    agent.provider_switched = True  # /model now reports where the provider and model came from
     if agent.compactor is not None:
         agent.compactor.provider = provider  # the summary must not go to the old one
         limits = agent.compactor.limits

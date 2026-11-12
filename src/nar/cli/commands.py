@@ -11,6 +11,7 @@ from pathlib import Path
 
 from nar.agent.approval import ApprovalGate
 from nar.cli.slash import PendingSkill, SlashContext, register_command
+from nar.config.loader import DEFAULT_SOURCE
 from nar.config.models import ApprovalLevel
 from nar.errors import NarError
 from nar.skills import Skill, SkillError, read_instructions, user_skills_dir
@@ -44,6 +45,16 @@ def _exit(context: SlashContext, argument: str) -> None:
     raise SystemExit(0)
 
 
+def _model_source(context: SlashContext, key: str) -> str:
+    """Where the provider or model in use came from, in the words of ``/config``."""
+    if context.agent is not None and context.agent.provider_switched:
+        return "set in this session with /model"
+    loaded = context.loaded
+    if loaded is None:
+        return DEFAULT_SOURCE
+    return loaded.source_of(key, context.cwd or Path.cwd())
+
+
 def _model(context: SlashContext, argument: str) -> None:
     from nar.cli.runner import switch_model
 
@@ -53,7 +64,12 @@ def _model(context: SlashContext, argument: str) -> None:
         return
     spec = argument.strip()
     if not spec:
-        _line(context, f"provider {agent.provider.name}, model {agent.provider.model}")
+        provider, model = agent.provider.name, agent.provider.model
+        _line(
+            context,
+            f"provider {provider} ({_model_source(context, 'provider')}), "
+            f"model {model} ({_model_source(context, 'model')})",
+        )
         return
     current = agent.provider
     try:
