@@ -15,6 +15,7 @@ from nar.cli import repl
 from nar.config import ApprovalLevel, Language, NarConfig, ProviderName, load_config
 from nar.context import ProjectInstructions, load_project_instructions
 from nar.errors import NarError
+from nar.i18n import set_language
 
 if TYPE_CHECKING:
     from nar.session import Session
@@ -133,6 +134,7 @@ def cli(
             "language": language,
         },
     )
+    set_language(loaded.config.language)
     if show_config:
         for line in loaded.describe(cwd):
             click.echo(line)
