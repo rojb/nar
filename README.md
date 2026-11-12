@@ -42,6 +42,7 @@ nar                      # interactive mode: one conversation, type "exit" to le
 nar "explain this repo"  # single mode: runs the agent on one prompt and exits
 nar --provider ollama --model qwen2.5-coder "hello"   # choose provider/model for this run
 nar --approval auto-edit "add a docstring to main.py"  # edit project files without asking
+nar --language en "explain this repo"  # get the answer in English (Spanish is the default)
 nar --resume             # continue the latest session of this folder
 nar --resume 20261103 "and now?"  # continue that session with one prompt and exit
 nar --trust-project-tools "use my tool"  # allow this project's tool files without asking
@@ -137,6 +138,7 @@ nested tables (such as `mcp_servers`) are merged key by key:
 | `provider` | `anthropic`, `openrouter`, `ollama`, `deepseek` | `openrouter` |
 | `model` | any model name of that provider | the provider's default model (see below) |
 | `approval` | `ask`, `auto-edit`, `yolo` | `ask` |
+| `language` | `es`, `en`: the language the model replies in (see "Reply language") | `es` |
 | `max_turns` | whole number, at least 1: model calls allowed per request | `20` |
 | `context_window` | whole number, at least 1000: size of the model's context in tokens | by provider (see "Long conversations") |
 | `context_threshold` | whole number from 1 to 100: percentage of the window where `nar` starts reducing the conversation | `80` |
@@ -156,9 +158,35 @@ Unknown keys, invalid values and malformed TOML stop `nar` with a one-line error
 code 1. `nar --show-config` prints each effective key with its source (`default`, the user
 file, the project file or `command line`).
 
-`--provider`, `--model` and `--approval` override the files for one run. A `model` set in a file is kept
+`--provider`, `--model`, `--approval` and `--language` override the files for one run. A `model` set in a file is kept
 when only `--provider` is given, so pass both flags when switching to a provider that does not
 know that model.
+
+## Reply language
+
+`nar` tells the model to always reply in the language of the `language` setting: `es` (Spanish,
+the default) or `en` (English). So, with no configuration, a question written in English is
+answered in Spanish. Set it for every project in `~/.nar/config.toml`, for one project in
+`.nar/config.toml`, or for one run with `--language`:
+
+```toml
+language = "en"
+```
+
+```bash
+nar --language en "what does README.md say?"
+```
+
+- The same rule is given to every subagent, and the summary written when the conversation is
+  compacted uses the same language.
+- Code, identifiers, file names, paths, commands, tool arguments and quoted text are left
+  unchanged.
+- The rule is part of the system prompt, which is built once, so the language does not change
+  during a session. Start `nar` again with another `--language` to change it.
+- Only the model's replies change. `nar`'s own messages (errors, warnings, `/help`) stay in
+  English for now.
+- It is an instruction to the model, so an `AGENTS.md` that asks for something else, such as
+  commit messages in English, still applies.
 
 ## Approvals
 
