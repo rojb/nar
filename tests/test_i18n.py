@@ -1,9 +1,11 @@
 """The interface-text catalog (RRG-98)."""
 
+import string
+
 import pytest
 
 from nar import i18n
-from nar.i18n import UnknownMessageKey, current_language, set_language, t
+from nar.i18n import UnknownMessageKey, current_language, messages_en, messages_es, set_language, t
 
 # --- t / set_language ---------------------------------------------------------------------
 
@@ -62,3 +64,37 @@ def test_unknown_key_raises_an_error_that_names_the_key():
 def test_missing_value_is_an_error_not_an_empty_text():
     with pytest.raises(KeyError):
         t("repl.banner", provider="anthropic")
+
+
+# --- catalog parity -----------------------------------------------------------------------
+
+
+def _placeholders(text: str) -> set[str]:
+    return {name for _, name, _, _ in string.Formatter().parse(text) if name is not None}
+
+
+def parity_problems(es: dict[str, str], en: dict[str, str]) -> list[str]:
+    """Describe every key or placeholder difference between two catalogs."""
+    problems = [f"{key}: missing in es" for key in sorted(en.keys() - es.keys())]
+    problems += [f"{key}: missing in en" for key in sorted(es.keys() - en.keys())]
+    for key in sorted(es.keys() & en.keys()):
+        if _placeholders(es[key]) != _placeholders(en[key]):
+            problems.append(f"{key}: placeholders differ")
+    return problems
+
+
+def test_catalogs_have_the_same_keys_and_placeholders():
+    assert parity_problems(messages_es.MESSAGES, messages_en.MESSAGES) == []
+
+
+def test_parity_check_reports_a_missing_key():
+    problems = parity_problems({"a": "x"}, {"a": "x", "b": "y"})
+
+    assert problems == ["b: missing in es"]
+    assert parity_problems({"a": "x", "b": "y"}, {"a": "x"}) == ["b: missing in en"]
+
+
+def test_parity_check_reports_a_different_placeholder():
+    problems = parity_problems({"a": "{count} archivos"}, {"a": "{n} files"})
+
+    assert problems == ["a: placeholders differ"]
