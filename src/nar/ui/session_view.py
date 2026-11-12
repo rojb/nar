@@ -9,6 +9,7 @@ from datetime import datetime
 from rich.console import Console
 from rich.text import Text
 
+from nar.i18n import t, tn
 from nar.providers.messages import Message
 from nar.session.checkpoints import Checkpoint
 from nar.session.store import Session
@@ -24,7 +25,7 @@ def render_history(messages: Sequence[Message], console: Console) -> None:
     shown = [m for m in messages if m.role != "tool"]
     omitted = len(shown) - MAX_MESSAGES_SHOWN
     if omitted > 0:
-        _print(console, f"({omitted} earlier messages not shown)", "dim")
+        _print(console, tn("session.history_omitted", omitted), "dim")
         shown = shown[-MAX_MESSAGES_SHOWN:]
     for message in shown:
         if message.role == "user":
@@ -47,31 +48,39 @@ def render_sessions(
     err: Console,
 ) -> None:
     if not sessions:
-        _print(console, "no saved sessions")
+        _print(console, t("session.none"))
     for session in sessions[:MAX_SESSIONS_LISTED]:
         mark = "*" if session.id == current_id else " "
         count = len(session.messages)
-        _print(
-            console,
-            f"{mark} {session.id}  {_local_date(session.updated_at)}  {count} messages  "
-            f"{session.cwd}  {session.title}",
+        line = tn(
+            "session.line",
+            count,
+            mark=mark,
+            id=session.id,
+            date=_local_date(session.updated_at),
+            cwd=session.cwd,
+            title=session.title,
         )
+        _print(console, line)
     hidden = len(sessions) - MAX_SESSIONS_LISTED
     if hidden > 0:
-        _print(console, f"({hidden} older sessions not shown)", "dim")
+        _print(console, tn("session.older", hidden), "dim")
     if invalid:
-        _print(err, f"warning: {invalid} session files are not valid and were left out", "yellow")
+        _print(err, tn("session.invalid", invalid, prefix=t("warning.prefix")), "yellow")
 
 
 def render_checkpoints(checkpoints: Sequence[Checkpoint], console: Console) -> None:
     if not checkpoints:
-        _print(console, "this session has no checkpoints")
+        _print(console, t("checkpoint.none"))
     for checkpoint in checkpoints:
-        _print(
-            console,
-            f"{checkpoint.id}  {_local_date(checkpoint.created_at)}  "
-            f"{len(checkpoint.messages)} messages  {checkpoint.name}".rstrip(),
+        line = tn(
+            "checkpoint.line",
+            len(checkpoint.messages),
+            id=checkpoint.id,
+            date=_local_date(checkpoint.created_at),
+            name=checkpoint.name,
         )
+        _print(console, line.rstrip())
 
 
 def _print(console: Console, text: str, style: str = "") -> None:
@@ -81,7 +90,7 @@ def _print(console: Console, text: str, style: str = "") -> None:
 def _cut(text: str) -> str:
     if len(text) <= MAX_MESSAGE_CHARS:
         return text
-    return f"{text[:MAX_MESSAGE_CHARS]} [cut: {len(text) - MAX_MESSAGE_CHARS} more characters]"
+    return f"{text[:MAX_MESSAGE_CHARS]} {t('session.cut', count=len(text) - MAX_MESSAGE_CHARS)}"
 
 
 def _local_date(stamp: str) -> str:

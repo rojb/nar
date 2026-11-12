@@ -24,10 +24,19 @@ cli_module = importlib.import_module("nar.cli.main")
 class _Runner(CliRunner):
     """Invoke `nar.cli.main` (a plain function, not a Click command) under CliRunner."""
 
-    def invoke(self, _main, args=None, **kwargs):  # noqa: D102
+    def invoke(self, _main, args=None, *, interface="en", **kwargs):  # noqa: D102
+        """Run ``main`` with ``--language <interface>`` unless the test passes its own.
+
+        The default interface language is Spanish, so most of these tests (which read the English
+        text) pin ``en``. A test about the default passes ``interface=None``.
+        """
+        arguments = list(args or [])
+        if interface and "--language" not in arguments:
+            arguments = ["--language", interface, *arguments]
+
         @click.command(add_help_option=False)
         def wrapper():
-            _main(list(args or []))
+            _main(arguments)
 
         return super().invoke(wrapper, [], **kwargs)
 
@@ -234,7 +243,7 @@ def workdir(tmp_path, monkeypatch):
 
 
 def test_show_config_defaults(runner, workdir):
-    result = runner.invoke(main, ["--show-config"])
+    result = runner.invoke(main, ["--show-config"], interface=None)
     assert result.exit_code == 0
     assert "provider = openrouter  (default)" in result.output
     assert "model = openrouter/auto  (default)" in result.output
@@ -245,7 +254,7 @@ def test_show_config_defaults(runner, workdir):
 def test_show_config_project_value_and_source(runner, workdir):
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('model = "b"\n', encoding="utf-8")
-    result = runner.invoke(main, ["--show-config"])
+    result = runner.invoke(main, ["--show-config"], interface=None)
     assert result.exit_code == 0
     assert "model = b  (.nar/config.toml)" in result.output
 
@@ -1010,11 +1019,13 @@ def test_language_flag_beats_the_project_file(runner, workdir):
 
 
 def test_without_the_flag_language_comes_from_the_file_or_the_default(runner, workdir):
-    assert "language = es  (default)" in runner.invoke(main, ["--show-config"]).output
+    assert (
+        "language = es  (default)" in runner.invoke(main, ["--show-config"], interface=None).output
+    )
 
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
-    result = runner.invoke(main, ["--show-config"])
+    result = runner.invoke(main, ["--show-config"], interface=None)
 
     assert "language = en  (.nar/config.toml)" in result.output
 
@@ -1031,7 +1042,7 @@ def test_invalid_language_in_a_file_exits_one_with_one_line(runner, workdir):
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('language = "fr"\n', encoding="utf-8")
 
-    result = runner.invoke(main, [])
+    result = runner.invoke(main, [], interface=None)
 
     assert result.exit_code == 1
     assert result.stderr.startswith("error: ")
@@ -1049,13 +1060,13 @@ def test_active_interface_language_follows_the_language_option(runner, workdir):
 
 
 def test_active_interface_language_follows_the_file_and_defaults_to_spanish(runner, workdir):
-    runner.invoke(main, ["--show-config"])
+    runner.invoke(main, ["--show-config"], interface=None)
     assert i18n.current_language() == "es"
 
     (workdir / ".nar").mkdir()
     (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
     i18n.set_language("es")
-    runner.invoke(main, ["--show-config"])
+    runner.invoke(main, ["--show-config"], interface=None)
     assert i18n.current_language() == "en"
 
 
@@ -1121,7 +1132,7 @@ def test_single_mode_asks_on_the_terminal_and_runs_the_approved_call(
     terminal("y")
     fake_provider.script = [write_file_call(), LLMResponse("Created.")]
 
-    result = runner.invoke(main, ["--language", "en", "create a.txt"])
+    result = runner.invoke(main, ["create a.txt"])
 
     assert result.exit_code == 0
     assert (workdir / "a.txt").read_bytes() == b"hi\n"
@@ -1165,7 +1176,7 @@ def test_auto_edit_still_asks_for_a_shell_command(runner, workdir, fake_provider
     terminal("n", "")
     fake_provider.script = [tool_call("shell", command="python --version"), LLMResponse("Ok.")]
 
-    result = runner.invoke(main, ["--language", "en", "--approval", "auto-edit", "run python"])
+    result = runner.invoke(main, ["--approval", "auto-edit", "run python"])
 
     assert "Allow shell?" in result.stderr
     assert "rejected by user" in result.stderr
@@ -1189,7 +1200,7 @@ def test_interactive_mode_asks_and_goes_on_to_the_next_prompt(
     terminal("create a.txt", "y", "thanks", "exit")
     fake_provider.script = [write_file_call(), LLMResponse("Created."), LLMResponse("Welcome.")]
 
-    result = runner.invoke(main, ["--language", "en"])
+    result = runner.invoke(main, [])
 
     assert result.exit_code == 0
     assert (workdir / "a.txt").exists()
@@ -1274,7 +1285,7 @@ def test_single_mode_asks_before_an_mcp_call_at_the_default_level(
     terminal("y")
     fake_provider.script = echo_script(fake_provider, "mcp__demo__echo", text="approved")
 
-    result = runner.invoke(main, ["--language", "en", "echo something"])
+    result = runner.invoke(main, ["echo something"])
 
     assert result.exit_code == 0
     assert result.stdout == "tool said: approved\n"
@@ -1642,9 +1653,7 @@ def at_a_terminal(monkeypatch):
 
 
 def test_a_missing_key_is_asked_for_checked_and_saved(runner, fake_provider, at_a_terminal):
-    result = runner.invoke(
-        main, ["--language", "en", "--provider", "deepseek"], input="y\nhello\nexit\n"
-    )
+    result = runner.invoke(main, ["--provider", "deepseek"], input="y\nhello\nexit\n")
     assert result.exit_code == 0
     assert "DEEPSEEK_API_KEY is not set." in result.stderr
     assert "saved DEEPSEEK_API_KEY for your Windows user" in result.stderr
@@ -1684,7 +1693,7 @@ def test_model_asks_for_a_missing_key_and_keeps_the_previous_one_on_rejection(
     )
     first.script = [LLMResponse("still here")]
     lines = "/model anthropic\nare you there?\nexit\n"
-    result = runner.invoke(main, ["--language", "en", "--provider", "ollama"], input=lines)
+    result = runner.invoke(main, ["--provider", "ollama"], input=lines)
     assert result.exit_code == 0
     assert "ANTHROPIC_API_KEY is not set." in result.stderr
     assert "still using fake · fake-model" in result.stderr
@@ -1804,7 +1813,7 @@ def test_no_balance_offers_the_other_providers_and_retries_there(
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
     second.script = [LLMResponse("answered by the second provider")]
-    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n3\n/model\nexit\n")
+    result = runner.invoke(main, [], input="fix the bug\n3\n/model\nexit\n")
     assert result.exit_code == 0
     stderr = result.stderr
     assert f"error: {NO_BALANCE}" in stderr
@@ -1824,7 +1833,7 @@ def test_no_balance_offers_the_other_providers_and_retries_there(
 def test_enter_at_the_list_stays_on_the_provider(runner, monkeypatch, menu_at_a_terminal):
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
-    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n\n/model\nexit\n")
+    result = runner.invoke(main, [], input="fix the bug\n\n/model\nexit\n")
     assert result.exit_code == 0
     assert "Enter: stay on fake" in result.stderr
     assert "provider fake (default), model fake-model (default)" in result.stderr
@@ -1836,7 +1845,7 @@ def test_a_pick_that_fails_its_check_shows_the_list_again(runner, monkeypatch, m
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
     second.check_error = ProviderError(OLLAMA_DOWN, "ollama", unavailable=True)
-    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n3\n\nexit\n")
+    result = runner.invoke(main, [], input="fix the bug\n3\n\nexit\n")
     assert result.exit_code == 0
     assert OLLAMA_DOWN in result.stderr
     assert result.stderr.count("can't answer. Continue with another provider?") == 2
@@ -1849,7 +1858,7 @@ def test_a_second_failure_offers_the_list_without_the_tried_providers(
     first, second = two_providers(monkeypatch)
     first.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
     second.script = [ProviderError("ollama failed after 4 attempts", "ollama", unavailable=True)]
-    result = runner.invoke(main, ["--language", "en"], input="fix the bug\n3\n\nexit\n")
+    result = runner.invoke(main, [], input="fix the bug\n3\n\nexit\n")
     assert result.exit_code == 0
     assert "Choose 1-4:" in result.stderr
     assert "ollama can't answer" in result.stderr
@@ -1858,14 +1867,14 @@ def test_a_second_failure_offers_the_list_without_the_tried_providers(
 
 def test_a_user_mistake_offers_no_list(runner, fake_provider, menu_at_a_terminal):
     fake_provider.script = [ProviderError("deepseek rejected the API key; check X", "deepseek")]
-    result = runner.invoke(main, ["--language", "en"], input="fix the bug\nexit\n")
+    result = runner.invoke(main, [], input="fix the bug\nexit\n")
     assert "rejected the API key" in result.stderr
     assert "Continue with another provider?" not in result.stderr
 
 
 def test_piped_input_offers_no_list(runner, fake_provider):
     fake_provider.script = [ProviderError(NO_BALANCE, "deepseek", unavailable=True)]
-    result = runner.invoke(main, ["--language", "en"], input="fix the bug\nexit\n")
+    result = runner.invoke(main, [], input="fix the bug\nexit\n")
     assert NO_BALANCE in result.stderr
     assert "Continue with another provider?" not in result.stderr
 
@@ -1979,7 +1988,7 @@ def test_skills_are_listed_in_the_system_prompt_and_the_tool_is_registered(
 def test_without_configuration_the_model_is_told_to_reply_in_spanish(
     runner, workdir, fake_provider
 ):
-    result = runner.invoke(main, ["what does README.md say?"])
+    result = runner.invoke(main, ["what does README.md say?"], interface=None)
 
     assert result.exit_code == 0
     assert "Always reply to the user in Spanish" in fake_provider.system

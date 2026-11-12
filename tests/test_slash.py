@@ -257,7 +257,7 @@ def test_sessions_lists_without_calling_the_model_and_marks_the_current(session_
     assert "  other" in shown
     assert "other request" in shown
     assert str(project) in shown
-    assert "1 session files are not valid" in shown
+    assert "1 session file is not valid" in shown
     assert context.console.file.getvalue() == ""
 
 
