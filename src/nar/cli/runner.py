@@ -68,7 +68,11 @@ def create_agent(
     provider = factory.create_provider(config, on_retry=view.retry)
     view.waiting_text = f"waiting for {provider.model}..."
     skills = discover_skills(cwd, view.warn)
-    context = ContextManager(build_system_prompt(cwd, instructions, _saved_memory(view), skills))
+    context = ContextManager(
+        build_system_prompt(
+            cwd, instructions, _saved_memory(view), skills, language=config.language
+        )
+    )
     registry = create_default_registry(cwd)
     prompter = TerminalPrompter(view.tools)
     limits = ContextLimits(
@@ -91,7 +95,7 @@ def create_agent(
         context,
         max_turns=config.max_turns,
         gate=approval_gate(config.approval, prompter, registry.context),
-        compactor=Compactor(provider, limits),
+        compactor=Compactor(provider, limits, language=config.language),
         detector=LoopDetector(),
         hooks=hooks,
     )
@@ -101,6 +105,7 @@ def create_agent(
             max_turns=config.subagent_max_turns,
             instructions=instructions,
             progress=view.subagents,
+            language=config.language,
         )
     )
     agent.skills = skills

@@ -12,7 +12,7 @@ import click
 
 from nar import __version__
 from nar.cli import repl
-from nar.config import ApprovalLevel, NarConfig, ProviderName, load_config
+from nar.config import ApprovalLevel, Language, NarConfig, ProviderName, load_config
 from nar.context import ProjectInstructions, load_project_instructions
 from nar.errors import NarError
 
@@ -95,6 +95,11 @@ def _find_session(resume: str, cwd: Path) -> Session:
     ),
 )
 @click.option(
+    "--language",
+    type=click.Choice([language.value for language in Language]),
+    help="Language the model replies in for this run (overrides the configuration).",
+)
+@click.option(
     "--resume",
     is_flag=False,
     flag_value="",
@@ -113,13 +118,20 @@ def cli(
     provider: str | None,
     model: str | None,
     approval: str | None,
+    language: str | None,
     resume: str | None,
     trust_project_tools: bool,
 ) -> int:
     cwd = Path.cwd()
     # Invalid configuration stops startup here.
     loaded = load_config(
-        cwd, overrides={"provider": provider, "model": model, "approval": approval}
+        cwd,
+        overrides={
+            "provider": provider,
+            "model": model,
+            "approval": approval,
+            "language": language,
+        },
     )
     if show_config:
         for line in loaded.describe(cwd):

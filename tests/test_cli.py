@@ -239,6 +239,7 @@ def test_show_config_defaults(runner, workdir):
     assert "provider = openrouter  (default)" in result.output
     assert "model = openrouter/auto  (default)" in result.output
     assert "approval = ask  (default)" in result.output
+    assert "language = es  (default)" in result.output
 
 
 def test_show_config_project_value_and_source(runner, workdir):
@@ -987,6 +988,68 @@ def test_help_lists_the_approval_option(runner):
     result = runner.invoke(main, ["--help"])
 
     assert "--approval [ask|auto-edit|yolo]" in result.output
+
+
+# --- --language -----------------------------------------------------------------------------
+
+
+def test_language_flag_is_shown_as_the_command_line_source(runner, workdir):
+    result = runner.invoke(main, ["--language", "en", "--show-config"])
+
+    assert result.exit_code == 0
+    assert "language = en  (command line)" in result.output
+
+
+def test_language_flag_beats_the_project_file(runner, workdir):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('language = "es"\n', encoding="utf-8")
+
+    result = runner.invoke(main, ["--language", "en", "--show-config"])
+
+    assert "language = en  (command line)" in result.output
+
+
+def test_without_the_flag_language_comes_from_the_file_or_the_default(runner, workdir):
+    assert "language = es  (default)" in runner.invoke(main, ["--show-config"]).output
+
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
+    result = runner.invoke(main, ["--show-config"])
+
+    assert "language = en  (.nar/config.toml)" in result.output
+
+
+def test_invalid_language_option_lists_the_languages(runner):
+    result = runner.invoke(main, ["--language", "fr", "hello"])
+
+    assert result.exit_code == 2
+    assert "es" in result.output
+    assert "en" in result.output
+
+
+def test_invalid_language_in_a_file_exits_one_with_one_line(runner, workdir):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('language = "fr"\n', encoding="utf-8")
+
+    result = runner.invoke(main, [])
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith("error: ")
+    assert "language" in result.stderr
+    assert "es, en" in result.stderr
+    assert len(result.stderr.strip().splitlines()) == 1
+
+
+def test_help_lists_the_language_option(runner):
+    result = runner.invoke(main, ["--help"])
+
+    assert "--language [es|en]" in result.output
+
+
+def test_config_command_shows_the_language_and_its_source(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["--language", "en"], input="/config\nexit\n")
+
+    assert "language = en  (command line)" in result.stderr
 
 
 # --- approvals in a run -------------------------------------------------------------------------
@@ -1890,6 +1953,32 @@ def test_skills_are_listed_in_the_system_prompt_and_the_tool_is_registered(
     assert "- demo: Shows how skills work" in fake_provider.system
     assert "SECRET-BODY" not in fake_provider.system
     assert "skill" in fake_provider.tool_names
+
+
+def test_without_configuration_the_model_is_told_to_reply_in_spanish(
+    runner, workdir, fake_provider
+):
+    result = runner.invoke(main, ["what does README.md say?"])
+
+    assert result.exit_code == 0
+    assert "Always reply to the user in Spanish" in fake_provider.system
+
+
+def test_language_flag_tells_the_model_to_reply_in_english(runner, workdir, fake_provider):
+    result = runner.invoke(main, ["--language", "en", "hola"])
+
+    assert result.exit_code == 0
+    assert "Always reply to the user in English" in fake_provider.system
+    assert "Spanish" not in fake_provider.system
+
+
+def test_language_from_the_project_file_reaches_the_system_prompt(runner, workdir, fake_provider):
+    (workdir / ".nar").mkdir()
+    (workdir / ".nar" / "config.toml").write_text('language = "en"\n', encoding="utf-8")
+
+    runner.invoke(main, ["hola"])
+
+    assert "Always reply to the user in English" in fake_provider.system
 
 
 def test_without_skills_there_is_no_section_no_tool_and_no_warning(runner, workdir, fake_provider):

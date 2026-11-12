@@ -22,6 +22,7 @@ from nar.agent.events import (
 from nar.agent.loop import Agent, ToolGate
 from nar.agent.loops import LoopDetector
 from nar.agent.prompt import build_subagent_prompt
+from nar.config.models import Language
 from nar.context.compaction import Compactor
 from nar.context.instructions import ProjectInstructions
 from nar.context.manager import ContextManager
@@ -105,17 +106,19 @@ class TaskTool(Tool):
         max_turns: int,
         instructions: ProjectInstructions | None = None,
         progress: SubagentProgress | None = None,
+        language: Language = Language.ES,
     ) -> None:
         # The parent, not copies: /model and MCP tools change it after this tool is created.
         self.parent = parent
         self.max_turns = max_turns
         self.instructions = instructions
         self.progress = progress
+        self.language = language
 
     def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         kind = SUBAGENT_TYPES[arguments["subagent"]]
         conversation = ContextManager(
-            build_subagent_prompt(kind.role, context.cwd, self.instructions)
+            build_subagent_prompt(kind.role, context.cwd, self.instructions, language=self.language)
         )
         agent = self._subagent(kind, conversation)
         tool_calls = turns = 0
@@ -152,7 +155,9 @@ class TaskTool(Tool):
         registry = self._registry_for(kind)
         compactor = None
         if parent.compactor is not None:
-            compactor = Compactor(parent.provider, parent.compactor.limits)
+            compactor = Compactor(
+                parent.provider, parent.compactor.limits, language=parent.compactor.language
+            )
         return Agent(
             parent.provider,
             registry,
