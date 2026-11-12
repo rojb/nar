@@ -246,4 +246,12 @@ MESSAGES: dict[str, str] = {
     "result.shell.lines.one": "{count} line",
     "result.shell.lines.other": "{count} lines",
     "result.shell.no_output": "no output",
+    "cli.help": 'nar: a CLI coding agent.\n\nRun `nar` with no arguments to start interactive mode, or `nar "<prompt>"` to run a single prompt and exit.',
+    "cli.opt.show_config": "Print the effective configuration and where each value comes from, then exit.",
+    "cli.opt.provider": "LLM provider for this run (overrides the configuration).",
+    "cli.opt.model": "Model for this run (overrides the configuration).",
+    "cli.opt.approval": "Autonomy level for this run (overrides the configuration): ask asks before every edit and command, auto-edit edits files inside the project without asking, yolo never asks.",
+    "cli.opt.language": "Language of the interface and of the model's replies for this run, es or en (overrides the configuration).",
+    "cli.opt.resume": "Continue the latest session of this folder, or the session with this id.",
+    "cli.opt.trust_project_tools": "Allow the tool files in .nar/tools/ of this folder to run, without asking.",
 }

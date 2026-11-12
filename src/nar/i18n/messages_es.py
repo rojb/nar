@@ -246,4 +246,12 @@ MESSAGES: dict[str, str] = {
     "result.shell.lines.one": "{count} línea",
     "result.shell.lines.other": "{count} líneas",
     "result.shell.no_output": "sin salida",
+    "cli.help": 'nar: un agente de programación para la terminal.\n\nEjecuta `nar` sin argumentos para iniciar el modo interactivo, o `nar "<prompt>"` para ejecutar un solo prompt y salir.',
+    "cli.opt.show_config": "Muestra la configuración efectiva y de dónde viene cada valor, y sale.",
+    "cli.opt.provider": "Proveedor de LLM para esta ejecución (reemplaza la configuración).",
+    "cli.opt.model": "Modelo para esta ejecución (reemplaza la configuración).",
+    "cli.opt.approval": "Nivel de autonomía para esta ejecución (reemplaza la configuración): ask pregunta antes de cada edición y comando, auto-edit edita archivos dentro del proyecto sin preguntar, yolo nunca pregunta.",
+    "cli.opt.language": "Idioma de la interfaz y de las respuestas del modelo en esta ejecución, es o en (reemplaza la configuración).",
+    "cli.opt.resume": "Continúa la última sesión de esta carpeta, o la sesión con este id.",
+    "cli.opt.trust_project_tools": "Permite, sin preguntar, que se ejecuten los archivos de herramientas de .nar/tools/ de esta carpeta.",
 }
