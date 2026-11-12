@@ -62,6 +62,17 @@ def t_en(key: str, **values: object) -> str:
     return text.format(**values)
 
 
+def template(key: str) -> str:
+    """The text for ``key`` in the active language, with its ``{placeholders}`` left as they are.
+
+    For a library that fills the placeholders itself (Click does, see ``click_words``).
+    """
+    try:
+        return _CATALOGS[_active][key]
+    except KeyError:
+        raise UnknownMessageKey(key, _active) from None
+
+
 def tn(key: str, count: int, **values: object) -> str:
     """Like ``t`` for a text that depends on a count: uses ``<key>.one`` when ``count`` is 1.
 
@@ -79,5 +90,6 @@ __all__ = [
     "set_language",
     "t",
     "t_en",
+    "template",
     "tn",
 ]

@@ -1,9 +1,16 @@
 """Output produced before the configuration is loaded: help, parse errors, boundary (RRG-98)."""
 
-import pytest
+import gettext
 
+import click
+import pytest
+from click.testing import CliRunner
+
+from nar import __version__
 from nar.cli import main
-from nar.cli.main import preresolve_language
+from nar.cli.main import build_command, preresolve_language
+from nar.i18n import click_words, set_language
+from nar.i18n.messages_en import MESSAGES as MESSAGES_EN
 from test_cli import _Runner
 
 
@@ -123,3 +130,198 @@ def test_option_names_and_choices_do_not_change_between_languages(runner, workdi
     ):
         assert text in spanish
         assert text in english
+
+
+# --- Click's own words (5.2) ----------------------------------------------------------------
+
+
+def test_help_uses_spanish_words_from_click_by_default(runner, workdir):
+    result = runner.invoke(main, ["--help"], interface=None)
+    assert result.exit_code == 0
+    assert result.output.startswith("Uso: ")
+    assert "\nOpciones:\n" in result.output
+    assert "Muestra este mensaje y sale." in result.output
+    assert "Muestra la versión y sale." in result.output
+    for english in ("Usage:", "Options:", "Show this message", "Show the version"):
+        assert english not in result.output
+
+
+def test_help_uses_click_english_with_the_option(runner, workdir):
+    result = runner.invoke(main, ["--language", "en", "--help"], interface=None)
+    assert result.output.startswith("Usage: ")
+    assert "\nOptions:\n" in result.output
+    assert "Show this message and exit." in result.output
+    assert "Show the version and exit." in result.output
+
+
+def test_english_help_is_what_click_prints_without_the_catalog(runner, workdir):
+    result = runner.invoke(main, ["--language", "en", "--help"], interface=None)
+    command = build_command()
+    with click.Context(command, info_name="nar", terminal_width=80) as ctx:
+        # Under pytest Click names the program `python -m pytest`; the rest must match.
+        assert result.output.replace("python -m pytest", "nar") == command.get_help(ctx) + "\n"
+
+
+def test_the_version_is_the_same_in_both_languages(runner, workdir):
+    for args in (["--version"], ["--language", "en", "--version"]):
+        result = runner.invoke(main, args, interface=None)
+        assert result.exit_code == 0
+        assert result.output.strip() == f"nar, version {__version__}"
+
+
+@pytest.mark.parametrize(
+    ("args", "spanish", "english"),
+    [
+        (
+            ["--approval", "bogus"],
+            "Error: Valor no válido para '--approval': 'bogus' no es una de las opciones: "
+            "'ask', 'auto-edit', 'yolo'.",
+            "Error: Invalid value for '--approval': 'bogus' is not one of "
+            "'ask', 'auto-edit', 'yolo'.",
+        ),
+        (
+            ["--nope"],
+            "Error: No existe la opción '--nope'.",
+            "Error: No such option '--nope'.",
+        ),
+        (
+            ["--model"],
+            "Error: La opción '--model' requiere un argumento.",
+            "Error: Option '--model' requires an argument.",
+        ),
+        (
+            ["--show-config=x"],
+            "Error: La opción '--show-config' no admite un valor.",
+            "Error: Option '--show-config' does not take a value.",
+        ),
+        (
+            ["one", "two"],
+            "Error: Hay un argumento de más (two)",
+            "Error: Got unexpected extra argument (two)",
+        ),
+    ],
+)
+def test_parse_errors_are_in_the_pre_resolved_language(runner, workdir, args, spanish, english):
+    es = runner.invoke(main, args, interface=None)
+    assert es.exit_code == 2
+    assert spanish in es.stderr
+    en = runner.invoke(main, ["--language", "en", *args], interface=None)
+    assert en.exit_code == 2
+    assert english in en.stderr
+
+
+def test_a_usage_error_shows_the_usage_and_the_hint_in_spanish(runner, workdir):
+    es = runner.invoke(main, ["--nope"], interface=None)
+    assert es.stderr.startswith("Uso: ")
+    assert "--help' para ver la ayuda." in es.stderr
+    en = runner.invoke(main, ["--language", "en", "--nope"], interface=None)
+    assert en.stderr.startswith("Usage: ")
+    assert "--help' for help." in en.stderr
+
+
+def test_an_unknown_option_suggests_a_close_one_in_spanish(runner, workdir):
+    result = runner.invoke(main, ["--resum"], interface=None)
+    assert "No existe la opción '--resum'. ¿Quisiste decir '--resume'?" in result.stderr
+
+
+def test_an_invalid_language_value_lists_both_languages_in_spanish(runner, workdir):
+    result = runner.invoke(main, ["--language", "fr", "hello"], interface=None)
+    assert result.exit_code == 2
+    assert "'fr' no es una de las opciones: 'es', 'en'." in result.stderr
+
+
+def test_the_language_of_a_file_applies_to_parse_errors(runner, workdir):
+    _user_config(workdir, 'language = "en"\n')
+    result = runner.invoke(main, ["--approval", "bogus"], interface=None)
+    assert result.exit_code == 2
+    assert "Invalid value for '--approval'" in result.stderr
+
+
+# --- the Click installer and its pins (5.2) ------------------------------------------------
+
+
+def test_the_installer_restores_gettext_and_leaves_other_domains_alone():
+    before = gettext.translation
+    set_language("es")
+    with click_words.installed():
+        assert gettext.gettext("Usage:") == "Uso:"
+        assert gettext.gettext("an id Click never asks for") == "an id Click never asks for"
+        assert gettext.ngettext("a", "b", 1) == "a"
+        assert gettext.ngettext("a", "b", 2) == "b"
+        assert gettext.translation is not before
+    assert gettext.translation is before
+    assert gettext.gettext("Usage:") == "Usage:"
+
+
+def test_click_words_follow_the_language_active_at_call_time():
+    with click_words.installed():
+        set_language("es")
+        assert gettext.gettext("Options") == "Opciones"
+        set_language("en")
+        assert gettext.gettext("Options") == "Options"
+
+
+def test_plural_forms_choose_by_count():
+    set_language("es")
+    with click_words.installed():
+        one = gettext.ngettext("Option {name!r} requires an argument.", "ignored", 1)
+        many = gettext.ngettext("Option {name!r} requires an argument.", "ignored", 2)
+    assert one == "La opción {name!r} requiere un argumento."
+    assert many == "La opción {name!r} requiere {nargs} argumentos."
+
+
+def test_english_catalog_texts_are_click_message_ids():
+    """If a Click upgrade rewords an id, the English text must be updated with it."""
+    for msgid, key in click_words.message_ids().items():
+        assert MESSAGES_EN[key] == msgid
+
+
+def test_every_message_id_in_the_table_is_asked_for_by_click(monkeypatch, runner, workdir):
+    """Pin: if Click stops asking for an id, its translation silently stops working."""
+    asked: set[str] = set()
+    plain = click_words.ClickTranslations.gettext
+    plural = click_words.ClickTranslations.ngettext
+
+    def spy_gettext(self, message):
+        asked.add(message)
+        return plain(self, message)
+
+    def spy_ngettext(self, msgid1, msgid2, n):
+        asked.add(msgid1)
+        return plural(self, msgid1, msgid2, n)
+
+    monkeypatch.setattr(click_words.ClickTranslations, "gettext", spy_gettext)
+    monkeypatch.setattr(click_words.ClickTranslations, "ngettext", spy_ngettext)
+
+    for args in (
+        ["--help"],
+        ["--version"],
+        ["--approval", "x"],
+        ["--resum"],
+        ["--mode"],
+        ["--model"],
+    ):
+        runner.invoke(main, args, interface=None)
+    for args in (["--show-config=x"], ["a", "b"]):
+        runner.invoke(main, args, interface=None)
+
+    @click.command()
+    @click.option("--needs", required=True)
+    @click.argument("name")
+    def other(needs, name):
+        raise click.BadParameter("nope")
+
+    @click.command()
+    @click.option("--once", type=click.Choice(["only"]))
+    def single(once):
+        pass
+
+    with click_words.installed():
+        for args in ([], ["x"], ["--needs", "1", "x"]):
+            assert CliRunner().invoke(other, args).exit_code == 2
+        CliRunner().invoke(single, ["--once", "bad"])
+        # an option given as "--needs" is "Missing option"; "parameter" has no command of its own
+        click.exceptions.MissingParameter(param_type="parameter").format_message()
+
+    missing = set(click_words.message_ids()) - asked
+    assert not missing, f"Click no longer asks for: {sorted(missing)}"

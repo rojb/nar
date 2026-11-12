@@ -18,7 +18,7 @@ from nar.config import ApprovalLevel, Language, NarConfig, ProviderName, load_co
 from nar.config import paths as config_paths
 from nar.context import ProjectInstructions, load_project_instructions
 from nar.errors import NarError
-from nar.i18n import DEFAULT_LANGUAGE, set_language, t, tn
+from nar.i18n import DEFAULT_LANGUAGE, click_words, set_language, t, tn
 
 if TYPE_CHECKING:
     from nar.session import Session
@@ -192,6 +192,11 @@ def _debug_enabled() -> bool:
 def main(argv: list[str] | None = None) -> None:
     """Entry point: run the command and turn errors into one-line messages."""
     set_language(preresolve_language(sys.argv[1:] if argv is None else argv))
+    with click_words.installed():
+        _run_command(argv)
+
+
+def _run_command(argv: list[str] | None) -> None:
     try:
         result = build_command().main(args=argv, standalone_mode=False)
     except click.exceptions.Abort:
