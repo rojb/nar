@@ -173,11 +173,7 @@ class HookRunner:
         event = outcome.event.value
         # A before_tool hook that did not use the block code let the call run: say so, or the
         # user would think the project's rule applied.
-        unblocked = (
-            " and did not block the call"
-            if outcome.event is HookEvent.BEFORE_TOOL and not outcome.blocks
-            else ""
-        )
+        unblocked = " and did not block the call" if outcome.event is HookEvent.BEFORE_TOOL else ""
         if outcome.error is not None:
             self.warn(
                 f"warning: hook {event} could not run: {outcome.error}{unblocked}: "
@@ -189,6 +185,11 @@ class HookRunner:
                 f"warning: hook {event} timed out after {self.timeout:g} s{unblocked}: "
                 f"{outcome.command}"
             )
+            self._show(outcome)
+            return
+        if (
+            outcome.blocks and outcome.event is HookEvent.BEFORE_TOOL
+        ):  # the hook did its job: refusing the call is not a failure
             self._show(outcome)
             return
         if outcome.exit_code != 0:
